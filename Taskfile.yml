@@ -1,0 +1,44 @@
+---
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+version: "3"
+
+dotenv: ["build.env"]
+
+vars:
+  GOBIN: go
+  LDFLAGS: "-extldflags '-static' -w -s -buildid="
+  GCFLAGS: "all=-trimpath={{.ROOT_DIR}} -dwarf=false -l"
+  ASMFLAGS: "all=-trimpath={{.ROOT_DIR}}"
+  BIN: "{{.ROOT_DIR}}/bin"
+  APP: pandaxng
+  APP_BIN: "{{.BIN}}/{{.APP}}"
+
+env:
+  CGO_ENABLED: "0"
+  GOARCH: amd64
+  GOOS: linux
+
+tasks:
+  setup:
+    desc: Set up the build directory
+    internal: true
+    silent: true
+    cmds:
+      - mkdir -p "{{.BIN}}"
+
+  build:
+    desc: Build the static Linux amd64 binary
+    dir: "{{.ROOT_DIR}}"
+    deps: [setup]
+    cmds:
+      - >
+        {{.GOBIN}} build
+        -tags netgo
+        -ldflags="{{.LDFLAGS}}"
+        -trimpath
+        -gcflags="{{.GCFLAGS}}"
+        -asmflags="{{.ASMFLAGS}}"
+        -o "{{.APP_BIN}}"
+        ./cmd/{{.APP}}
+      - strip "{{.APP_BIN}}"
+      - objcopy --strip-unneeded "{{.APP_BIN}}"
