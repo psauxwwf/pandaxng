@@ -35,9 +35,26 @@ go build -o bin/pandaxng ./cmd/pandaxng
 Три команды без алиасов: `search` для поиска (JSON), `fetch` для чтения страницы
 (Markdown), `mcp` для запуска MCP-сервера.
 
-`search` и `fetch` (включая MCP) используют режим ожидания `done`: перед чтением
-DOM ждут завершения сетевых запросов и скриптов. Ожидание ограничено `--timeout`
-(по умолчанию 20 секунд). Постоянная фоновая активность может привести к таймауту;
+`search`, `fetch` и `mcp` поддерживают `--wait-until`. Значения по умолчанию
+одинаковы для CLI и MCP-инструментов:
+
+| Операция | Режим ожидания | Таймаут |
+|---|---|---|
+| `search` | `domcontentloaded` | 20 секунд на движок |
+| `fetch` / `fetch_content` | `done` | 40 секунд |
+
+| Режим | Когда читать страницу |
+|---|---|
+| `domcontentloaded` | После построения DOM, не дожидаясь всех ресурсов |
+| `load` | После события загрузки страницы |
+| `networkalmostidle` | Когда сетевых запросов почти не осталось |
+| `networkidle` | Когда сетевая активность затихла |
+| `done` | После завершения всех ожидающих скриптов и сетевых запросов |
+
+Ожидание ограничено `--timeout`. Постоянная фоновая
+активность может привести к таймауту `done`, даже когда выдача уже доступна.
+Например, для Yahoo можно выбрать `--wait-until networkalmostidle`.
+Ранние режимы могут вернуть ещё не заполненную JavaScript страницу;
 ошибки сети и недоступный IPv6 увеличением ожидания не исправляются.
 
 ### Поиск: `search`
@@ -46,12 +63,13 @@ DOM ждут завершения сетевых запросов и скрип�
 ./bin/pandaxng search 'linux namespaces'
 ./bin/pandaxng search 'что такое контейнеры' --engines duckduckgo,yahoo --language ru-RU
 ./bin/pandaxng search 'lightpanda browser' --engines brave --limit 5 --timeout 25s
+./bin/pandaxng search 'lightpanda browser' --engines yahoo --wait-until networkalmostidle
 ./bin/pandaxng search --list-engines
 ./bin/pandaxng --help
 ```
 
 По умолчанию: все три движка, максимум 10 результатов с каждого,
-три параллельных браузера, 20 секунд на движок, язык `en-US`.
+три параллельных браузера, `domcontentloaded`, 20 секунд на движок, язык `en-US`.
 
 | Флаг | Назначение |
 |---|---|
@@ -59,6 +77,7 @@ DOM ждут завершения сетевых запросов и скрип�
 | `--limit` | Результатов на движок, 1–50 (по умолчанию 10) |
 | `--jobs` | Параллельных браузеров, 1–3 (по умолчанию 3) |
 | `--timeout` | Таймаут на движок: Go duration (`20s`, `1m`), диапазон 1s–2m |
+| `--wait-until` | Режим ожидания страницы из таблицы выше (по умолчанию `domcontentloaded`) |
 | `--language` | Язык браузера (по умолчанию `en-US`) |
 | `--lightpanda` | Путь к исполняемому файлу (по умолчанию `lightpanda` из PATH) |
 | `--list-engines` | Вывести поддерживаемые движки без поиска |
@@ -82,14 +101,16 @@ DOM ждут завершения сетевых запросов и скрип�
 ```sh
 ./bin/pandaxng fetch 'https://ident.me'
 ./bin/pandaxng fetch 'https://example.com' --timeout 30s --language ru-RU
+./bin/pandaxng fetch 'https://example.com' --wait-until load
 ./bin/pandaxng fetch 'https://example.com/article' > article.md
 ```
 
 Запускает `lightpanda fetch --dump markdown --log-format pretty --log-level info`
-с теми же User-Agent и TLS-флагом, что и поиск. Страница загружается с выполнением
+с теми же User-Agent и TLS-флагом, что и поиск. По умолчанию режим `done`,
+таймаут 40 секунд. Страница загружается с выполнением
 JavaScript, выводится Markdown целиком (без JSON). Логи Lightpanda не смешиваются
 с содержимым; при сбое диагностика выводится в stderr, код завершения — `1`.
-HTTP 4xx/5xx считаются ошибками. Поддерживаются `--timeout`, `--language`,
+HTTP 4xx/5xx считаются ошибками. Поддерживаются `--timeout`, `--wait-until`, `--language`,
 `--lightpanda`; `Ctrl+C` останавливает процесс.
 
 CLI-команда `fetch` и MCP-инструмент `fetch_content` используют одну реализацию.
@@ -108,6 +129,7 @@ CLI-команда `fetch` и MCP-инструмент `fetch_content` испо�
 # stdio — по умолчанию; stdout содержит только JSON-RPC
 ./bin/pandaxng mcp
 ./bin/pandaxng mcp --transport stdio
+./bin/pandaxng mcp --wait-until networkalmostidle
 
 # Streamable HTTP, endpoint http://127.0.0.1:8080/mcp
 ./bin/pandaxng mcp --transport http
@@ -118,10 +140,30 @@ CLI-команда `fetch` и MCP-инструмент `fetch_content` испо�
 
 | Tool | Параметры | Результат |
 |---|---|---|
-| `search` | `query` (обязательно), `max_results` (1–50, по умолчанию 10 на движок), `engines` (массив, по умолчанию все три), `language` | JSON с объединённой выдачей и статусами движков; также в `structuredContent` |
-| `fetch_content` | `url` (обязательно), `language` | Markdown страницы после выполнения JavaScript |
+| `search` | `query` (обязательно), `max_results` (1–50, по умолчанию 10 на движок), `engines` (массив, по умолчанию все три), `language`, `wait_until`, `timeout` | JSON с объединённой выдачей и статусами движков; также в `structuredContent` |
+| `fetch_content` | `url` (обязательно), `language`, `wait_until`, `timeout` | Markdown страницы после выбранного события загрузки |
 
-Серверные флаги `--lightpanda`, `--timeout`, `--language` задают общие настройки.
+Серверные флаги `--lightpanda`, `--timeout`, `--language`, `--wait-until` задают
+общие настройки. Без этих флагов используются разные значения для инструментов:
+`search` — `domcontentloaded` / 20 секунд, `fetch_content` — `done` / 40 секунд.
+Явные `mcp --timeout` и `mcp --wait-until` переопределяют соответствующую настройку
+сразу для обоих инструментов. Аргументы `wait_until` и `timeout` **необязательны**:
+их можно не передавать, чтобы использовать настройки сервера.
+`wait_until` переопределяет режим для одного вызова; допустимы те же пять значений.
+`timeout` — целое число секунд от 1 до 120 (для поиска — на каждый движок),
+переопределяет таймаут браузера и общий deadline этого вызова, включая ожидание слота.
+Приоритет: аргумент MCP-запроса → серверный флаг → стандартное значение инструмента.
+
+Примеры аргументов MCP-инструментов:
+
+```json
+{"query": "lightpanda browser"}
+```
+
+```json
+{"url": "https://ident.me", "wait_until": "done", "timeout": 60}
+```
+
 Ошибки инструментов возвращаются как MCP `isError`; при частичном успехе поиска
 ошибки остальных движков остаются в отчёте. Одновременно исполняются максимум
 3 tool-вызова, каждый поиск запускает до 3 браузеров. Ожидание слота тоже

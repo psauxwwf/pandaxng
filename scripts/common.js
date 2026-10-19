@@ -50,7 +50,7 @@ function collectResults(config, limit) {
 async function search(config) {
   const page = new Page();
   try {
-    await page.goto(request.url, {timeout: request.timeout, waitUntil: "done"});
+    await page.goto(request.url, {timeout: request.timeout, waitUntil: request.waitUntil});
     // evaluate returns JSON text, unlike extract's native object return value.
     const script = `(${collectResults.toString()})(${JSON.stringify(config)}, ${request.limit})`;
     return JSON.parse(page.evaluate(script));

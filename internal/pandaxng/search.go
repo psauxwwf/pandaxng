@@ -28,6 +28,7 @@ type Options struct {
 	Timeout              time.Duration
 	Jobs                 int
 	Language             string
+	WaitUntil            string
 	Binary               string
 	BlockPrivateNetworks bool
 }
@@ -66,6 +67,11 @@ func Search(ctx context.Context, query string, options Options) (Report, error) 
 	if options.Timeout < time.Second || options.Timeout > 2*time.Minute {
 		return report, fmt.Errorf("timeout must be between 1s and 2m")
 	}
+	waitUntil, err := NormalizeWaitUntil(options.WaitUntil, DefaultSearchWaitUntil)
+	if err != nil {
+		return report, err
+	}
+	options.WaitUntil = waitUntil
 	var engines []string
 	for _, name := range options.Engines {
 		name = strings.ToLower(strings.TrimSpace(name))
@@ -118,11 +124,15 @@ func searchURL(engine, query string) string {
 }
 
 func makeScript(engine, query string, options Options) string {
+	if options.WaitUntil == "" {
+		options.WaitUntil = DefaultSearchWaitUntil
+	}
 	request, _ := json.Marshal(struct {
-		URL     string `json:"url"`
-		Limit   int    `json:"limit"`
-		Timeout int64  `json:"timeout"`
-	}{searchURL(engine, query), options.Limit, options.Timeout.Milliseconds()})
+		URL       string `json:"url"`
+		Limit     int    `json:"limit"`
+		Timeout   int64  `json:"timeout"`
+		WaitUntil string `json:"waitUntil"`
+	}{searchURL(engine, query), options.Limit, options.Timeout.Milliseconds(), options.WaitUntil})
 	// Engine names are validated before reading these embedded files.
 	common, _ := scripts.Files.ReadFile("common.js")
 	parser, _ := scripts.Files.ReadFile("engines/" + engine + ".js")

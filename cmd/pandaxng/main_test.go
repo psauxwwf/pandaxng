@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestListEngines(t *testing.T) {
@@ -39,6 +40,9 @@ func TestInvalidArguments(t *testing.T) {
 		{"search"}, {"search", "a", "b"},
 		{"search", "query", "--timeout", "0s"},
 		{"search", "query", "--engines", "google"},
+		{"search", "query", "--wait-until", "invalid"},
+		{"fetch", "https://example.com", "--wait-until", "invalid"},
+		{"mcp", "--wait-until", "invalid"},
 		{"query"}, {"fetch-content", "https://example.com"}, {"fetch_content", "https://example.com"},
 		{"mcp", "extra"}, {"mcp", "--transport", "sse"}, {"mcp", "--timeout", "0s"},
 	} {
@@ -52,18 +56,60 @@ func TestInvalidArguments(t *testing.T) {
 
 func TestFetchCommand(t *testing.T) {
 	binary := filepath.Join(t.TempDir(), "lightpanda")
-	if err := os.WriteFile(binary, []byte("#!/bin/sh\nprintf '# Markdown\\n'\n"), 0o700); err != nil {
+	if err := os.WriteFile(binary, []byte("#!/bin/sh\ncase \" $* \" in *' --wait-until networkalmostidle '*) ;; *) exit 9 ;; esac\nprintf '# Markdown\\n'\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	cmd := rootCmd()
 	var output bytes.Buffer
 	cmd.SetOut(&output)
-	cmd.SetArgs([]string{"fetch", "https://example.com", "--lightpanda", binary, "--timeout", "5s"})
+	cmd.SetArgs([]string{"fetch", "https://example.com", "--lightpanda", binary, "--timeout", "5s", "--wait-until", "networkalmostidle"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
 	if output.String() != "# Markdown\n" {
 		t.Fatalf("unexpected output: %q", output.String())
+	}
+}
+
+func TestWaitUntilFlags(t *testing.T) {
+	for _, cmd := range rootCmd().Commands() {
+		if cmd.Hidden {
+			continue
+		}
+		mode, err := cmd.Flags().GetString("wait-until")
+		wantMode, wantTimeout := "", time.Duration(0)
+		switch cmd.Name() {
+		case "search":
+			wantMode, wantTimeout = "domcontentloaded", 20*time.Second
+		case "fetch":
+			wantMode, wantTimeout = "done", 40*time.Second
+		}
+		if err != nil || mode != wantMode {
+			t.Fatalf("%s: default wait-until %q, error %v", cmd.Name(), mode, err)
+		}
+		timeout, err := cmd.Flags().GetDuration("timeout")
+		if err != nil || timeout != wantTimeout {
+			t.Fatalf("%s: default timeout %v, error %v", cmd.Name(), timeout, err)
+		}
+	}
+}
+
+func TestSearchWaitUntilCommand(t *testing.T) {
+	binary := filepath.Join(t.TempDir(), "lightpanda")
+	script := `#!/bin/sh
+input=$(cat)
+case "$input" in *'"waitUntil":"networkalmostidle"'*) ;; *) exit 9 ;; esac
+printf '%s\n' '{"status":"empty","results":[]}'
+`
+	if err := os.WriteFile(binary, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cmd := rootCmd()
+	var output bytes.Buffer
+	cmd.SetOut(&output)
+	cmd.SetArgs([]string{"search", "test", "--engines", "yahoo", "--lightpanda", binary, "--wait-until", "networkalmostidle"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
 	}
 }
 

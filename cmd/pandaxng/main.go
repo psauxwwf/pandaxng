@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/charmbracelet/fang"
 	"github.com/spf13/cobra"
@@ -81,7 +80,8 @@ func searchCmd() *cobra.Command {
 	}
 	cmd.Flags().StringSliceVar(&options.Engines, "engines", pandaxng.Engines(), "comma-separated search engines")
 	cmd.Flags().IntVar(&options.Limit, "limit", 10, "results per engine (1–50)")
-	cmd.Flags().DurationVar(&options.Timeout, "timeout", 20*time.Second, "timeout per engine (1s–2m)")
+	cmd.Flags().DurationVar(&options.Timeout, "timeout", pandaxng.DefaultSearchTimeout, "timeout per engine (1s–2m)")
+	waitUntilFlag(cmd, &options.WaitUntil, pandaxng.DefaultSearchWaitUntil)
 	cmd.Flags().IntVar(&options.Jobs, "jobs", 3, "parallel browsers (1–3)")
 	cmd.Flags().StringVar(&options.Language, "language", "en-US", "browser locale")
 	cmd.Flags().StringVar(&options.Binary, "lightpanda", "lightpanda", "Lightpanda executable")
@@ -104,8 +104,14 @@ func fetchCmd() *cobra.Command {
 			return err
 		},
 	}
-	cmd.Flags().DurationVar(&options.Timeout, "timeout", 20*time.Second, "fetch timeout (1s–2m)")
+	cmd.Flags().DurationVar(&options.Timeout, "timeout", pandaxng.DefaultFetchTimeout, "fetch timeout (1s–2m)")
+	waitUntilFlag(cmd, &options.WaitUntil, pandaxng.DefaultFetchWaitUntil)
 	cmd.Flags().StringVar(&options.Language, "language", "en-US", "browser locale")
 	cmd.Flags().StringVar(&options.Binary, "lightpanda", "lightpanda", "Lightpanda executable")
 	return cmd
+}
+
+func waitUntilFlag(cmd *cobra.Command, mode *string, fallback string) {
+	cmd.Flags().StringVar(mode, "wait-until", fallback,
+		"wait state: load, domcontentloaded, networkalmostidle, networkidle, done")
 }

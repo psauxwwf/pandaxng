@@ -72,8 +72,32 @@ func TestFetchValidation(t *testing.T) {
 		}
 	}
 	options.Timeout = time.Second
+	options.WaitUntil = "invalid"
+	if _, err := FetchContent(context.Background(), "https://example.com", options); err == nil || !strings.Contains(err.Error(), "wait-until must") {
+		t.Fatalf("expected wait-until validation, got %v", err)
+	}
+	options.WaitUntil = ""
 	if _, err := FetchContent(context.Background(), "https://example.com", options); err == nil || !strings.Contains(err.Error(), "Lightpanda not found") {
 		t.Fatalf("expected missing binary error, got %v", err)
+	}
+}
+
+func TestFetchWaitUntil(t *testing.T) {
+	argsPath := filepath.Join(t.TempDir(), "args")
+	t.Setenv("PANDAXNG_FETCH_ARGS", argsPath)
+	binary := fakeFetchBinary(t, `printf '%s\n' "$@" > "$PANDAXNG_FETCH_ARGS"`)
+	for _, mode := range WaitUntilModes() {
+		options := FetchOptions{Binary: binary, Timeout: time.Second, WaitUntil: mode}
+		if _, err := FetchContent(context.Background(), "https://example.com", options); err != nil {
+			t.Fatal(err)
+		}
+		raw, err := os.ReadFile(argsPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(raw), "--wait-until\n"+mode+"\n") {
+			t.Fatalf("wait state %q missing from arguments: %s", mode, raw)
+		}
 	}
 }
 

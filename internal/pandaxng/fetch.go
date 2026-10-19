@@ -16,6 +16,7 @@ type FetchOptions struct {
 	Binary               string
 	Timeout              time.Duration
 	Language             string
+	WaitUntil            string
 	BlockPrivateNetworks bool
 }
 
@@ -29,6 +30,10 @@ func FetchContent(ctx context.Context, rawURL string, options FetchOptions) (str
 	if options.Timeout < time.Second || options.Timeout > 2*time.Minute {
 		return "", fmt.Errorf("timeout must be between 1s and 2m")
 	}
+	waitUntil, err := NormalizeWaitUntil(options.WaitUntil, DefaultFetchWaitUntil)
+	if err != nil {
+		return "", err
+	}
 	binary, err := exec.LookPath(options.Binary)
 	if err != nil {
 		return "", fmt.Errorf("Lightpanda not found: %w", err)
@@ -40,7 +45,7 @@ func FetchContent(ctx context.Context, rawURL string, options FetchOptions) (str
 		"--log-format", "pretty", "--log-level", "info", "--dump", "markdown",
 		"--user-agent", userAgent, "--insecure-disable-tls-host-verification",
 		"--locale", options.Language, "--http-timeout", millis, "--watchdog-ms", millis,
-		"--wait-until", "done", "--wait-ms", millis, "--terminate-ms", millis,
+		"--wait-until", waitUntil, "--wait-ms", millis, "--terminate-ms", millis,
 		"--http-max-response-size", "16777216", "--v8-max-heap-mb", "256",
 		"--fail-on-http-error"}
 	if options.BlockPrivateNetworks {

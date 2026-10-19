@@ -36,11 +36,24 @@ func TestSearchURL(t *testing.T) {
 	}
 }
 
-func TestSearchWaitUntilDone(t *testing.T) {
-	for _, engine := range Engines() {
-		script := makeScript(engine, "test", testOptions())
-		if !strings.Contains(script, `waitUntil: "done"`) || strings.Contains(script, "networkalmostidle") {
-			t.Fatalf("%s does not wait for full page quiescence", engine)
+func TestSearchWaitUntil(t *testing.T) {
+	for _, mode := range append([]string{""}, WaitUntilModes()...) {
+		for _, engine := range Engines() {
+			options := testOptions()
+			options.WaitUntil = mode
+			script := makeScript(engine, "test", options)
+			requestJSON, _, _ := strings.Cut(strings.TrimPrefix(script, "const request = "), ";\n")
+			var request struct{ WaitUntil string }
+			if err := json.Unmarshal([]byte(requestJSON), &request); err != nil {
+				t.Fatal(err)
+			}
+			want := mode
+			if want == "" {
+				want = "domcontentloaded"
+			}
+			if request.WaitUntil != want || !strings.Contains(script, "waitUntil: request.waitUntil") {
+				t.Fatalf("%s: wait-until %q not passed to goto: %s", engine, want, requestJSON)
+			}
 		}
 	}
 }
@@ -65,6 +78,7 @@ func TestSearchLightpandaIntegration(t *testing.T) {
 	defer server.Close()
 	options := testOptions()
 	options.Timeout = 5 * time.Second
+	options.WaitUntil = "done" // This fixture explicitly waits for delayed JavaScript.
 	script := strings.Replace(makeScript("duckduckgo", "test", options), searchURL("duckduckgo", "test"), server.URL, 1)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -173,6 +187,7 @@ func TestValidation(t *testing.T) {
 		func(o *Options) { o.Limit = 0 },
 		func(o *Options) { o.Jobs = 4 },
 		func(o *Options) { o.Timeout = 0 },
+		func(o *Options) { o.WaitUntil = "invalid" },
 	} {
 		options := testOptions()
 		change(&options)
