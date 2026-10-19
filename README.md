@@ -136,6 +136,20 @@ CLI-команда `fetch` и MCP-инструмент `fetch_content` испо�
 }
 ```
 
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "servers": {
+      "PANDAXNG": {
+        "type": "local",
+        "command": ["pandaxng", "mcp"],
+      },
+    },
+  },
+}
+```
+
 **Безопасность:** MCP по умолчанию разрешает сетевые обращения к внутренним
 адресам — используйте только с доверенными клиентами (есть риск SSRF).
 Для блокировки запустите `mcp --disable-private-urls`: Lightpanda получит
