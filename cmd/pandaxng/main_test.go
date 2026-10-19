@@ -40,6 +40,7 @@ func TestInvalidArguments(t *testing.T) {
 		{"search", "query", "--timeout", "0s"},
 		{"search", "query", "--engines", "google"},
 		{"query"}, {"fetch-content", "https://example.com"}, {"fetch_content", "https://example.com"},
+		{"mcp", "extra"}, {"mcp", "--transport", "sse"}, {"mcp", "--timeout", "0s"},
 	} {
 		cmd := rootCmd()
 		cmd.SetArgs(args)
@@ -93,7 +94,32 @@ func TestCommands(t *testing.T) {
 		}
 		names = append(names, cmd.Name())
 	}
-	if strings.Join(names, ",") != "fetch,search" {
+	if strings.Join(names, ",") != "fetch,mcp,search" {
 		t.Fatalf("unexpected commands: %v", names)
+	}
+}
+
+func TestMCPDisablePrivateURLs(t *testing.T) {
+	cmd := mcpCmd()
+	disabled, err := cmd.Flags().GetBool("disable-private-urls")
+	if err != nil || disabled {
+		t.Fatalf("private URLs should be allowed by default: %v, %v", disabled, err)
+	}
+	if err := cmd.ParseFlags([]string{"--disable-private-urls"}); err != nil {
+		t.Fatal(err)
+	}
+	disabled, err = cmd.Flags().GetBool("disable-private-urls")
+	if err != nil || !disabled {
+		t.Fatalf("private URLs should be blocked with the flag: %v, %v", disabled, err)
+	}
+	if err := cmd.ParseFlags([]string{"--disable-private-urls=false"}); err != nil {
+		t.Fatal(err)
+	}
+	disabled, err = cmd.Flags().GetBool("disable-private-urls")
+	if err != nil || disabled {
+		t.Fatalf("private URLs should be allowed with explicit false: %v, %v", disabled, err)
+	}
+	if cmd.Flags().Lookup("allow-private-urls") != nil {
+		t.Fatal("old allow-private-urls flag should not exist")
 	}
 }

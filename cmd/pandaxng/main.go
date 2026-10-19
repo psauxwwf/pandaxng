@@ -37,7 +37,7 @@ func rootCmd() *cobra.Command {
 		CompletionOptions: cobra.CompletionOptions{DisableDefaultCmd: true},
 	}
 	root.SetHelpCommand(&cobra.Command{Hidden: true})
-	root.AddCommand(searchCmd(), fetchCmd())
+	root.AddCommand(searchCmd(), fetchCmd(), mcpCmd())
 	return root
 }
 

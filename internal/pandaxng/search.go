@@ -23,12 +23,13 @@ const userAgent = "AppleWebKit/537.36 (X11; Linux x86_64) (KHTML, like Gecko) Ch
 func Engines() []string { return []string{"duckduckgo", "brave", "yahoo"} }
 
 type Options struct {
-	Engines  []string
-	Limit    int
-	Timeout  time.Duration
-	Jobs     int
-	Language string
-	Binary   string
+	Engines              []string
+	Limit                int
+	Timeout              time.Duration
+	Jobs                 int
+	Language             string
+	Binary               string
+	BlockPrivateNetworks bool
 }
 
 type Result struct {
@@ -139,6 +140,9 @@ func runEngine(ctx context.Context, engine, query string, options Options) (repo
 		"--user-agent", userAgent, "--insecure-disable-tls-host-verification",
 		"--locale", options.Language, "--http-timeout", millis, "--watchdog-ms", millis,
 		"--http-max-response-size", "16777216", "--v8-max-heap-mb", "256", "--log-level", "error")
+	if options.BlockPrivateNetworks {
+		cmd.Args = append(cmd.Args, "--block-private-networks")
+	}
 	cmd.WaitDelay = time.Second
 	cmd.Env = browserEnv()
 	cmd.Stdin = strings.NewReader(makeScript(engine, query, options))

@@ -12,6 +12,9 @@ vars:
   BIN: "{{.ROOT_DIR}}/bin"
   APP: pandaxng
   APP_BIN: "{{.BIN}}/{{.APP}}"
+  REPO_NAME:
+    sh: basename "{{.ROOT_DIR}}"
+  RELEASE_LINUX_ARCHIVE: "{{.BIN}}/{{.REPO_NAME}}_linux_amd64.tar.gz"
 
 env:
   CGO_ENABLED: "0"
@@ -42,3 +45,13 @@ tasks:
         ./cmd/{{.APP}}
       - strip "{{.APP_BIN}}"
       - objcopy --strip-unneeded "{{.APP_BIN}}"
+
+  release:
+    desc: Build and publish a GitHub release
+    dir: "{{.ROOT_DIR}}"
+    deps: [build]
+    cmds:
+      - tar -czf "{{.RELEASE_LINUX_ARCHIVE}}" -C "{{.BIN}}" "{{.APP}}"
+      - |
+        TAG=$(date +v%m.%d.%H)
+        gh release create "$TAG" "{{.RELEASE_LINUX_ARCHIVE}}"

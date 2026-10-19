@@ -145,3 +145,21 @@ func TestFetchLightpandaIntegration(t *testing.T) {
 		t.Fatalf("HTTP 404 should fail: content %q, error %v", content, err)
 	}
 }
+
+func TestFetchPrivateNetworkBlocked(t *testing.T) {
+	binary, err := exec.LookPath("lightpanda")
+	if err != nil {
+		t.Skip("Lightpanda is not installed")
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("private-network request reached the server")
+		fmt.Fprint(w, "private data")
+	}))
+	defer server.Close()
+	content, err := FetchContent(context.Background(), server.URL, FetchOptions{
+		Binary: binary, Timeout: time.Second, Language: "en-US", BlockPrivateNetworks: true,
+	})
+	if err == nil || content != "" {
+		t.Fatalf("private URL was not blocked: %q, %v", content, err)
+	}
+}

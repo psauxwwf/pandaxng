@@ -13,9 +13,10 @@ import (
 )
 
 type FetchOptions struct {
-	Binary   string
-	Timeout  time.Duration
-	Language string
+	Binary               string
+	Timeout              time.Duration
+	Language             string
+	BlockPrivateNetworks bool
 }
 
 // FetchContent loads an HTTP(S) page with JavaScript and returns its Markdown dump.
@@ -35,13 +36,18 @@ func FetchContent(ctx context.Context, rawURL string, options FetchOptions) (str
 	ctx, cancel := context.WithTimeout(ctx, options.Timeout+3*time.Second)
 	defer cancel()
 	millis := strconv.FormatInt(options.Timeout.Milliseconds(), 10)
-	cmd := exec.CommandContext(ctx, binary, "fetch",
+	args := []string{"fetch",
 		"--log-format", "pretty", "--log-level", "info", "--dump", "markdown",
 		"--user-agent", userAgent, "--insecure-disable-tls-host-verification",
 		"--locale", options.Language, "--http-timeout", millis, "--watchdog-ms", millis,
 		"--wait-until", "networkalmostidle", "--wait-ms", millis, "--terminate-ms", millis,
 		"--http-max-response-size", "16777216", "--v8-max-heap-mb", "256",
-		"--fail-on-http-error", u.String())
+		"--fail-on-http-error"}
+	if options.BlockPrivateNetworks {
+		args = append(args, "--block-private-networks")
+	}
+	args = append(args, u.String())
+	cmd := exec.CommandContext(ctx, binary, args...)
 	cmd.Env = browserEnv()
 	cmd.WaitDelay = time.Second
 	var stdout, stderr bytes.Buffer
