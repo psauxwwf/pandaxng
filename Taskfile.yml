@@ -7,8 +7,7 @@ dotenv: ["build.env"]
 vars:
   GOBIN: go
   LDFLAGS: "-extldflags '-static' -w -s -buildid="
-  GCFLAGS: "all=-trimpath={{.ROOT_DIR}} -dwarf=false -l"
-  ASMFLAGS: "all=-trimpath={{.ROOT_DIR}}"
+  GCFLAGS: "all=-dwarf=false -l"
   BIN: "{{.ROOT_DIR}}/bin"
   APP: pandaxng
   APP_BIN: "{{.BIN}}/{{.APP}}"
@@ -40,7 +39,6 @@ tasks:
         -ldflags="{{.LDFLAGS}}"
         -trimpath
         -gcflags="{{.GCFLAGS}}"
-        -asmflags="{{.ASMFLAGS}}"
         -o "{{.APP_BIN}}"
         ./cmd/{{.APP}}
       - strip "{{.APP_BIN}}"
