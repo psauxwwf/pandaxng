@@ -40,7 +40,7 @@ func FetchContent(ctx context.Context, rawURL string, options FetchOptions) (str
 		"--log-format", "pretty", "--log-level", "info", "--dump", "markdown",
 		"--user-agent", userAgent, "--insecure-disable-tls-host-verification",
 		"--locale", options.Language, "--http-timeout", millis, "--watchdog-ms", millis,
-		"--wait-until", "networkalmostidle", "--wait-ms", millis, "--terminate-ms", millis,
+		"--wait-until", "done", "--wait-ms", millis, "--terminate-ms", millis,
 		"--http-max-response-size", "16777216", "--v8-max-heap-mb", "256",
 		"--fail-on-http-error"}
 	if options.BlockPrivateNetworks {

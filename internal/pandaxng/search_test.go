@@ -2,8 +2,13 @@ package pandaxng
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -28,6 +33,54 @@ func TestSearchURL(t *testing.T) {
 		if u.Query().Get(parameter) != "тест & Go?" {
 			t.Fatal(u)
 		}
+	}
+}
+
+func TestSearchWaitUntilDone(t *testing.T) {
+	for _, engine := range Engines() {
+		script := makeScript(engine, "test", testOptions())
+		if !strings.Contains(script, `waitUntil: "done"`) || strings.Contains(script, "networkalmostidle") {
+			t.Fatalf("%s does not wait for full page quiescence", engine)
+		}
+	}
+}
+
+func TestSearchLightpandaIntegration(t *testing.T) {
+	binary, err := exec.LookPath("lightpanda")
+	if err != nil {
+		t.Skip("Lightpanda is not installed")
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/results" {
+			time.Sleep(750 * time.Millisecond)
+			fmt.Fprint(w, `<div class="result"><a class="result__a" href="https://example.com/">Delayed result</a><p class="result__snippet">Loaded asynchronously</p></div>`)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, `<!doctype html><html><body><div class="results"></div>
+<script>fetch('/results').then(r => r.text()).then(html => {
+  setTimeout(() => document.querySelector('.results').innerHTML = html, 750);
+});</script></body></html>`)
+	}))
+	defer server.Close()
+	options := testOptions()
+	options.Timeout = 5 * time.Second
+	script := strings.Replace(makeScript("duckduckgo", "test", options), searchURL("duckduckgo", "test"), server.URL, 1)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, binary, "run", "-", "--log-level", "error")
+	cmd.Env = browserEnv()
+	cmd.Stdin = strings.NewReader(script)
+	output, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("PandaScript failed: %v, output: %s", err, output)
+	}
+	var report EngineReport
+	if err := json.Unmarshal(output, &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.Status != "ok" || len(report.Results) != 1 || report.Results[0].Title != "Delayed result" || report.Results[0].Content != "Loaded asynchronously" {
+		t.Fatalf("missing asynchronous search result: %+v", report)
 	}
 }
 

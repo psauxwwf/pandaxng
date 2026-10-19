@@ -49,7 +49,7 @@ printf '# Заголовок\n\n[Ссылка](https://example.com/)\n'
 	want := []string{"fetch", "--log-format", "pretty", "--log-level", "info", "--dump", "markdown",
 		"--user-agent", userAgent, "--insecure-disable-tls-host-verification",
 		"--locale", "ru-RU", "--http-timeout", "20000", "--watchdog-ms", "20000",
-		"--wait-until", "networkalmostidle", "--wait-ms", "20000", "--terminate-ms", "20000",
+		"--wait-until", "done", "--wait-ms", "20000", "--terminate-ms", "20000",
 		"--http-max-response-size", "16777216", "--v8-max-heap-mb", "256",
 		"--fail-on-http-error", "https://example.com/?q=a&b=2"}
 	if !reflect.DeepEqual(args, want) {
@@ -114,6 +114,11 @@ func TestFetchLightpandaIntegration(t *testing.T) {
 		t.Skip("Lightpanda is not installed")
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/dynamic" {
+			time.Sleep(750 * time.Millisecond)
+			fmt.Fprint(w, "JavaScript executed")
+			return
+		}
 		if r.URL.Path == "/missing" {
 			http.Error(w, "missing page", http.StatusNotFound)
 			return
@@ -125,7 +130,9 @@ func TestFetchLightpandaIntegration(t *testing.T) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		fmt.Fprint(w, `<!doctype html><html><head><title>Fixture</title></head><body>
 <h1>Пример</h1><p id="dynamic">before</p><a href="https://example.com">Link</a>
-<script>setTimeout(() => document.getElementById('dynamic').textContent = 'JavaScript executed', 50);</script>
+<script>fetch('/dynamic').then(r => r.text()).then(text => {
+  setTimeout(() => document.getElementById('dynamic').textContent = text, 750);
+});</script>
 </body></html>`)
 	}))
 	defer server.Close()
