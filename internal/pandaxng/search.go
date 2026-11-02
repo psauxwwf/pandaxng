@@ -35,14 +35,12 @@ type Options struct {
 }
 
 type Result struct {
-	URL     string   `json:"url"`
-	Title   string   `json:"title"`
-	Content string   `json:"content"`
-	Engines []string `json:"engines,omitempty"`
+	URL     string `json:"url"`
+	Title   string `json:"title"`
+	Content string `json:"content"`
 }
 
 type EngineReport struct {
-	Engine  string   `json:"engine"`
 	Status  string   `json:"status"`
 	Results []Result `json:"results"`
 	URL     string   `json:"url,omitempty"`
@@ -51,19 +49,16 @@ type EngineReport struct {
 	Elapsed float64  `json:"elapsed"`
 }
 
-type Report struct {
-	Query   string         `json:"query"`
-	Results []Result       `json:"results"`
-	Engines []EngineReport `json:"engines"`
-}
+// Report keeps each engine's result cards and diagnostics under its name.
+type Report map[string]EngineReport
 
 func Search(ctx context.Context, query string, options Options) (Report, error) {
-	report := Report{Query: query, Results: []Result{}}
+	report := Report{}
 	if strings.TrimSpace(query) == "" || utf8.RuneCountInString(query) > 2000 {
 		return report, fmt.Errorf("query must contain 1–2000 characters")
 	}
-	if options.Limit < 1 || options.Limit > 50 || options.Jobs < 1 || options.Jobs > 3 {
-		return report, fmt.Errorf("limit must be 1–50 and jobs must be 1–3")
+	if options.Limit < 1 || options.Limit > 50 || options.Jobs < 1 || options.Jobs > 4 {
+		return report, fmt.Errorf("limit must be 1–50 and jobs must be 1–4")
 	}
 	if options.Timeout < time.Second || options.Timeout > 2*time.Minute {
 		return report, fmt.Errorf("timeout must be between 1s and 2m")
@@ -91,7 +86,7 @@ func Search(ctx context.Context, query string, options Options) (Report, error) 
 		return report, fmt.Errorf("Lightpanda not found: %w", err)
 	}
 	options.Binary = binary
-	report.Engines = make([]EngineReport, len(engines))
+	reports := make([]EngineReport, len(engines))
 	semaphore := make(chan struct{}, options.Jobs)
 	var group sync.WaitGroup
 	for i, engine := range engines {
@@ -99,14 +94,17 @@ func Search(ctx context.Context, query string, options Options) (Report, error) 
 			select {
 			case semaphore <- struct{}{}:
 				defer func() { <-semaphore }()
-				report.Engines[i] = runEngine(ctx, engine, query, options)
+				reports[i] = runEngine(ctx, engine, query, options)
 			case <-ctx.Done():
-				report.Engines[i] = EngineReport{Engine: engine, Status: "error", Results: []Result{}, Error: ctx.Err().Error()}
+				reports[i] = EngineReport{Status: "error", Results: []Result{}, Error: ctx.Err().Error()}
 			}
 		})
 	}
 	group.Wait()
-	report.Results = aggregate(report.Engines)
+	// Populate the map only after workers finish; concurrent map writes are unsafe.
+	for i, engine := range engines {
+		report[engine] = reports[i]
+	}
 	return report, nil
 }
 
@@ -145,7 +143,7 @@ func makeScript(engine, query string, options Options) string {
 
 func runEngine(ctx context.Context, engine, query string, options Options) (report EngineReport) {
 	started := time.Now()
-	report = EngineReport{Engine: engine, Status: "error", Results: []Result{}}
+	report = EngineReport{Status: "error", Results: []Result{}}
 	defer func() { report.Elapsed = time.Since(started).Seconds() }()
 	ctx, cancel := context.WithTimeout(ctx, options.Timeout+3*time.Second)
 	defer cancel()
@@ -192,7 +190,6 @@ func runEngine(ctx context.Context, engine, query string, options Options) (repo
 	for _, row := range data.Results {
 		row.URL = normalizeURL(engine, row.URL)
 		row.Title = strings.TrimSpace(row.Title)
-		row.Engines = nil
 		if row.URL == "" || row.Title == "" || slices.Contains(seen, row.URL) {
 			continue
 		}
@@ -259,29 +256,4 @@ func normalizeURL(engine, raw string) string {
 		u.Path = "/"
 	}
 	return u.String()
-}
-
-func aggregate(reports []EngineReport) []Result {
-	results := []Result{}
-	indexed := map[string]int{}
-	for rank := 0; ; rank++ {
-		found := false
-		for _, report := range reports {
-			if rank >= len(report.Results) {
-				continue
-			}
-			found = true
-			row := report.Results[rank]
-			if i, ok := indexed[row.URL]; ok {
-				results[i].Engines = append(results[i].Engines, report.Engine)
-			} else {
-				row.Engines = []string{report.Engine}
-				indexed[row.URL] = len(results)
-				results = append(results, row)
-			}
-		}
-		if !found {
-			return results
-		}
-	}
 }

@@ -45,6 +45,11 @@ fetch)
 run)
   input=$(cat)
   case "$input" in
+    *'q=blocked'*|*'www.bing.com/search?'*'q=partial'*)
+      printf '%s\n' '{"status":"blocked","error":"Verification required","results":[]}'
+      exit 0 ;;
+  esac
+  case "$input" in
     *'"url":"https://www.bing.com/search?'*)
       case "$input" in
         *'"limit":7,'*) case "$input" in *'search?count=7'* ) ;; *) exit 12 ;; esac ;;
@@ -163,8 +168,8 @@ func exerciseTools(t *testing.T, ctx context.Context, c *client.Client) {
 			t.Fatal(text.Text)
 		}
 		if name == "search" {
-			var report struct{ Query string }
-			if err := json.Unmarshal([]byte(text.Text), &report); err != nil || report.Query != "test" {
+			var report pandaxng.Report
+			if err := json.Unmarshal([]byte(text.Text), &report); err != nil || len(report) != 1 || report["brave"].Status != "ok" {
 				t.Fatalf("unexpected search JSON: %s (%v)", text.Text, err)
 			}
 		}
@@ -194,12 +199,54 @@ func exerciseTools(t *testing.T, ctx context.Context, c *client.Client) {
 		if !ok {
 			t.Fatalf("unexpected search content: %+v", result.Content)
 		}
+		for label, content := range map[string]any{"text": json.RawMessage(text.Text), "structured": result.StructuredContent} {
+			raw, err := json.Marshal(content)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var output map[string]struct {
+				Status  string           `json:"status"`
+				Results []map[string]any `json:"results"`
+			}
+			if err := json.Unmarshal(raw, &output); err != nil {
+				t.Fatal(err)
+			}
+			if len(output) != len(wantEngines) {
+				t.Fatalf("%s: unexpected engine groups: %s", label, raw)
+			}
+			for _, name := range wantEngines {
+				engine, ok := output[name]
+				if !ok || engine.Status != "ok" || len(engine.Results) != 1 {
+					t.Fatalf("%s: missing engine results or metadata: %s", label, raw)
+				}
+				row := engine.Results[0]
+				if len(row) != 3 || row["url"] != "https://example.com/" || row["title"] != "Example" || row["content"] != "Snippet" {
+					t.Fatalf("%s: unexpected per-engine result: %s", label, raw)
+				}
+			}
+		}
+	}
+	for _, query := range []string{"blocked", "partial"} {
+		var request mcp.CallToolRequest
+		request.Params.Name = "search"
+		request.Params.Arguments = map[string]any{"query": query, "engines": []string{"brave", "bing"}}
+		result, err := c.CallTool(ctx, request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.IsError != (query == "blocked") || len(result.Content) != 1 {
+			t.Fatalf("%s: unexpected error status: %+v", query, result)
+		}
+		text, ok := result.Content[0].(mcp.TextContent)
+		if !ok {
+			t.Fatalf("unexpected search content: %+v", result.Content)
+		}
 		var report pandaxng.Report
 		if err := json.Unmarshal([]byte(text.Text), &report); err != nil {
 			t.Fatal(err)
 		}
-		if len(report.Engines) != len(wantEngines) || len(report.Results) != 1 || report.Results[0].URL != "https://example.com/" || !slices.Equal(report.Results[0].Engines, wantEngines) {
-			t.Fatalf("engines %v: unexpected report %+v", engines, report)
+		if len(report) != 2 || report["bing"].Status != "blocked" || report["bing"].Error != "Verification required" || report["bing"].Results == nil {
+			t.Fatalf("%s: missing engine diagnostics: %+v", query, report)
 		}
 	}
 	for _, tc := range []struct{ format, want string }{

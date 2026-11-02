@@ -36,6 +36,13 @@ func TestHelp(t *testing.T) {
 	}
 }
 
+func TestSearchDefaultJobs(t *testing.T) {
+	flag := searchCmd().Flags().Lookup("jobs")
+	if flag == nil || flag.DefValue != "4" || !strings.Contains(flag.Usage, "1–4") {
+		t.Fatalf("unexpected jobs flag: %+v", flag)
+	}
+}
+
 func TestBingSearchCommand(t *testing.T) {
 	binary := filepath.Join(t.TempDir(), "lightpanda")
 	script := `#!/bin/sh
@@ -53,16 +60,20 @@ printf '%s\n' '{"status":"ok","results":[{"url":"https://www.bing.com/ck/a?u=a1a
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	var report struct {
+	var report map[string]struct {
+		Status  string `json:"status"`
 		Results []struct {
 			URL string `json:"url"`
-		}
+		} `json:"results"`
 	}
 	if err := json.Unmarshal(output.Bytes(), &report); err != nil {
 		t.Fatal(err)
 	}
-	if len(report.Results) != 1 || report.Results[0].URL != "https://example.com/" {
+	if len(report) != 1 || len(report["bing"].Results) != 1 || report["bing"].Results[0].URL != "https://example.com/" {
 		t.Fatalf("unexpected Bing results: %s", output.String())
+	}
+	if report["bing"].Status != "ok" {
+		t.Fatalf("missing engine metadata: %s", output.String())
 	}
 	engines, err := searchCmd().Flags().GetStringSlice("engines")
 	if err != nil || strings.Join(engines, ",") != "duckduckgo,brave,yahoo,bing" {
@@ -85,6 +96,44 @@ func TestInvalidArguments(t *testing.T) {
 		cmd.SetArgs(args)
 		if err := cmd.Execute(); err == nil {
 			t.Fatalf("expected error for %v", args)
+		}
+	}
+}
+
+func TestSearchGroupedStatuses(t *testing.T) {
+	binary := filepath.Join(t.TempDir(), "lightpanda")
+	script := `#!/bin/sh
+input=$(cat)
+case "$input" in
+  *'www.bing.com/search?'*) printf '%s\n' '{"status":"blocked","error":"Verification required","results":[]}' ;;
+  *) printf '%s\n' '{"status":"empty","results":[]}' ;;
+esac
+`
+	if err := os.WriteFile(binary, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, engines := range []string{"bing", "duckduckgo,bing"} {
+		cmd := rootCmd()
+		var output bytes.Buffer
+		cmd.SetOut(&output)
+		cmd.SetArgs([]string{"search", "test", "--engines", engines, "--lightpanda", binary})
+		err := cmd.Execute()
+		if (err != nil) != (engines == "bing") {
+			t.Fatalf("engines %s: unexpected error %v", engines, err)
+		}
+		var report map[string]struct {
+			Status  string `json:"status"`
+			Error   string `json:"error"`
+			Results []any  `json:"results"`
+		}
+		if err := json.Unmarshal(output.Bytes(), &report); err != nil {
+			t.Fatal(err)
+		}
+		if len(report) != len(strings.Split(engines, ",")) || report["bing"].Status != "blocked" || report["bing"].Error != "Verification required" || report["bing"].Results == nil {
+			t.Fatalf("missing grouped diagnostics: %s", output.String())
+		}
+		if engines != "bing" && report["duckduckgo"].Status != "empty" {
+			t.Fatalf("missing successful empty group: %s", output.String())
 		}
 	}
 }

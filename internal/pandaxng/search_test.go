@@ -18,7 +18,29 @@ import (
 )
 
 func testOptions() Options {
-	return Options{Engines: Engines(), Limit: 10, Timeout: time.Second, Jobs: 3, Language: "en-US", Binary: "lightpanda"}
+	return Options{Engines: Engines(), Limit: 10, Timeout: time.Second, Jobs: 4, Language: "en-US", Binary: "lightpanda"}
+}
+
+func TestSearchJobs(t *testing.T) {
+	binary := fakeBinary(t, `{"status":"empty","results":[]}`)
+	for jobs := 1; jobs <= 4; jobs++ {
+		t.Run(fmt.Sprint(jobs), func(t *testing.T) {
+			options := testOptions()
+			options.Jobs, options.Binary = jobs, binary
+			report, err := Search(context.Background(), "test", options)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(report) != len(Engines()) {
+				t.Fatalf("missing engine reports: %+v", report)
+			}
+			for name, engine := range report {
+				if engine.Status != "empty" {
+					t.Fatalf("%s: unexpected status: %+v", name, engine)
+				}
+			}
+		})
+	}
 }
 
 func TestSearchURL(t *testing.T) {
@@ -163,16 +185,47 @@ func TestNormalizeURL(t *testing.T) {
 	}
 }
 
-func TestAggregate(t *testing.T) {
-	got := aggregate([]EngineReport{
-		{Engine: "duckduckgo", Results: []Result{{URL: "a"}, {URL: "b"}}},
-		{Engine: "brave", Results: []Result{{URL: "a"}, {URL: "c"}}},
-	})
-	if len(got) != 3 || got[1].URL != "b" || got[2].URL != "c" || !reflect.DeepEqual(got[0].Engines, []string{"duckduckgo", "brave"}) {
-		t.Fatalf("unexpected aggregation: %+v", got)
-	}
-	if aggregate(nil) == nil {
-		t.Fatal("empty results must encode as []")
+func TestReportJSONGroupedByEngine(t *testing.T) {
+	for _, status := range []string{"ok", "empty", "blocked", "parse_error", "timeout", "error"} {
+		t.Run(status, func(t *testing.T) {
+			rows := []Result{{URL: "https://example.com/", Title: "Example", Content: "Snippet"}}
+			report := Report{
+				"bing": {
+					Status: status, Results: rows,
+					URL: "https://www.bing.com/search?q=test", Title: "Search",
+					Error: "Diagnostic", Elapsed: 0.5,
+				},
+			}
+			raw, err := json.Marshal(report)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var output map[string]map[string]json.RawMessage
+			if err := json.Unmarshal(raw, &output); err != nil {
+				t.Fatal(err)
+			}
+			if len(output) != 1 || output["bing"] == nil {
+				t.Fatalf("unexpected report JSON: %s", raw)
+			}
+			engine := output["bing"]
+			if _, ok := engine["engine"]; ok {
+				t.Fatalf("engine name must only appear as the group key: %s", raw)
+			}
+			var cards []map[string]any
+			if err := json.Unmarshal(engine["results"], &cards); err != nil {
+				t.Fatal(err)
+			}
+			if len(cards) != 1 || len(cards[0]) != 3 || cards[0]["url"] != rows[0].URL || cards[0]["title"] != rows[0].Title || cards[0]["content"] != rows[0].Content {
+				t.Fatalf("unexpected result card: %s", raw)
+			}
+			var decoded Report
+			if err := json.Unmarshal(raw, &decoded); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(decoded, report) {
+				t.Fatalf("results or engine metadata lost: %s", raw)
+			}
+		})
 	}
 }
 
@@ -201,8 +254,14 @@ func TestSearch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(report.Engines) != len(Engines()) || len(report.Results) != 1 || report.Results[0].URL != "https://example.com/" || report.Results[0].Title != "Example" || !reflect.DeepEqual(report.Results[0].Engines, Engines()) {
+	if len(report) != len(Engines()) {
 		t.Fatalf("unexpected report: %+v", report)
+	}
+	for _, engine := range Engines() {
+		group, ok := report[engine]
+		if !ok || group.Status != "ok" || len(group.Results) != 1 || group.Results[0].URL != "https://example.com/" || group.Results[0].Title != "Example" {
+			t.Fatalf("engine %s lost its results: %+v", engine, report)
+		}
 	}
 }
 
@@ -226,6 +285,58 @@ func TestEngineResponses(t *testing.T) {
 	}
 }
 
+func TestSearchPreservesEngineSpecificCards(t *testing.T) {
+	options := testOptions()
+	options.Binary = filepath.Join(t.TempDir(), "lightpanda")
+	script := `#!/bin/sh
+input=$(cat)
+case "$input" in
+  *'html.duckduckgo.com'*) name=duckduckgo ;;
+  *'search.brave.com'*) name=brave ;;
+  *'search.yahoo.com'*) name=yahoo ;;
+  *'www.bing.com'*) name=bing ;;
+  *) exit 9 ;;
+esac
+printf '{"status":"ok","results":[{"url":"https://example.com/","title":"%s title","content":"%s snippet"}]}\n' "$name" "$name"
+`
+	if err := os.WriteFile(options.Binary, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	report, err := Search(context.Background(), "test", options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range Engines() {
+		group, ok := report[name]
+		if !ok || len(group.Results) != 1 || group.Results[0].URL != "https://example.com/" || group.Results[0].Title != name+" title" || group.Results[0].Content != name+" snippet" {
+			t.Fatalf("%s lost its own title/snippet: %+v", name, report)
+		}
+	}
+}
+
+func TestEmptyEngineResultsJSON(t *testing.T) {
+	for _, status := range []string{"empty", "blocked", "error"} {
+		options := testOptions()
+		options.Engines = []string{"bing"}
+		options.Binary = fakeBinary(t, fmt.Sprintf(`{"status":%q,"results":[]}`, status))
+		report, err := Search(context.Background(), "test", options)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, err := json.Marshal(report)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var groups map[string]map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &groups); err != nil {
+			t.Fatal(err)
+		}
+		if len(groups) != 1 || string(groups["bing"]["results"]) != "[]" || report["bing"].Status != status {
+			t.Fatalf("empty result array or status lost: %s", raw)
+		}
+	}
+}
+
 func TestBingSearchNormalization(t *testing.T) {
 	options := testOptions()
 	options.Engines = []string{"bing"}
@@ -237,7 +348,7 @@ func TestBingSearchNormalization(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report.Engines[0].Status != "ok" || len(report.Results) != 1 || report.Results[0].URL != "https://example.com/" || !reflect.DeepEqual(report.Results[0].Engines, []string{"bing"}) {
+	if len(report) != 1 || report["bing"].Status != "ok" || len(report["bing"].Results) != 1 || report["bing"].Results[0].URL != "https://example.com/" {
 		t.Fatalf("unexpected Bing normalization: %+v", report)
 	}
 }
@@ -247,7 +358,8 @@ func TestValidation(t *testing.T) {
 		func(o *Options) { o.Engines = nil },
 		func(o *Options) { o.Engines = []string{"google"} },
 		func(o *Options) { o.Limit = 0 },
-		func(o *Options) { o.Jobs = 4 },
+		func(o *Options) { o.Jobs = 0 },
+		func(o *Options) { o.Jobs = 5 },
 		func(o *Options) { o.Timeout = 0 },
 		func(o *Options) { o.WaitUntil = "invalid" },
 	} {
@@ -273,7 +385,10 @@ func TestCanceledSearch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, engine := range report.Engines {
+	if len(report) != len(Engines()) {
+		t.Fatalf("missing canceled engine groups: %+v", report)
+	}
+	for _, engine := range report {
 		if engine.Status != "error" || engine.Error == "" {
 			t.Fatalf("unexpected canceled report: %+v", engine)
 		}
