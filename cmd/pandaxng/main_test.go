@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,7 +18,7 @@ func TestListEngines(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if output.String() != "duckduckgo\nbrave\nyahoo\n" {
+	if output.String() != "duckduckgo\nbrave\nyahoo\nbing\n" {
 		t.Fatal(output.String())
 	}
 }
@@ -32,6 +33,40 @@ func TestHelp(t *testing.T) {
 	}
 	if !strings.Contains(output.String(), "search") || !strings.Contains(output.String(), "fetch") {
 		t.Fatal(output.String())
+	}
+}
+
+func TestBingSearchCommand(t *testing.T) {
+	binary := filepath.Join(t.TempDir(), "lightpanda")
+	script := `#!/bin/sh
+input=$(cat)
+case "$input" in *'"url":"https://www.bing.com/search?count=7'*'#b_results > .b_algo'*) ;; *) exit 9 ;; esac
+printf '%s\n' '{"status":"ok","results":[{"url":"https://www.bing.com/ck/a?u=a1aHR0cHM6Ly9leGFtcGxlLmNvbS8","title":"Example","content":"Snippet"}]}'
+`
+	if err := os.WriteFile(binary, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cmd := rootCmd()
+	var output bytes.Buffer
+	cmd.SetOut(&output)
+	cmd.SetArgs([]string{"search", "test", "--engines", "bing", "--limit", "7", "--lightpanda", binary})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	var report struct {
+		Results []struct {
+			URL string `json:"url"`
+		}
+	}
+	if err := json.Unmarshal(output.Bytes(), &report); err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Results) != 1 || report.Results[0].URL != "https://example.com/" {
+		t.Fatalf("unexpected Bing results: %s", output.String())
+	}
+	engines, err := searchCmd().Flags().GetStringSlice("engines")
+	if err != nil || strings.Join(engines, ",") != "duckduckgo,brave,yahoo,bing" {
+		t.Fatalf("unexpected default engines: %v, error %v", engines, err)
 	}
 }
 

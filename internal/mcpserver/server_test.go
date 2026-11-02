@@ -19,6 +19,8 @@ import (
 	"github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+
+	"pandaxng/internal/pandaxng"
 )
 
 func testConfig(t *testing.T) Config {
@@ -40,7 +42,19 @@ fetch)
     semantic_tree_text) printf "1 RootWebArea 'Page content'\n" ;;
     *) exit 11 ;;
   esac ;;
-run) cat >/dev/null; printf '%s\n' '{"status":"ok","results":[{"url":"https://example.com/","title":"Example","content":"Snippet"}]}' ;;
+run)
+  input=$(cat)
+  case "$input" in
+    *'"url":"https://www.bing.com/search?'*)
+      case "$input" in
+        *'"limit":7,'*) case "$input" in *'search?count=7'* ) ;; *) exit 12 ;; esac ;;
+        *'"limit":10,'*) case "$input" in *'search?count=10'* ) ;; *) exit 13 ;; esac ;;
+        *) exit 14 ;;
+      esac
+      result_url='https://www.bing.com/ck/a?u=a1aHR0cHM6Ly9leGFtcGxlLmNvbS8' ;;
+    *) result_url='https://example.com/' ;;
+  esac
+  printf '{"status":"ok","results":[{"url":"%s","title":"Example","content":"Snippet"}]}\n' "$result_url" ;;
 *) exit 10 ;;
 esac
 `
@@ -89,6 +103,10 @@ func exerciseTools(t *testing.T, ctx context.Context, c *client.Client) {
 				Maximum     int      `json:"maximum"`
 				Default     any      `json:"default"`
 				Enum        []string `json:"enum"`
+				MaxItems    int      `json:"maxItems"`
+				Items       struct {
+					Enum []string `json:"enum"`
+				} `json:"items"`
 			} `json:"properties"`
 		}
 		if err := json.Unmarshal(raw, &schema); err != nil {
@@ -109,6 +127,12 @@ func exerciseTools(t *testing.T, ctx context.Context, c *client.Client) {
 				!slices.Equal(p.Enum, []string{"md", "html", "semantic_tree_text"}) ||
 				!strings.Contains(p.Description, "Optional") || !strings.Contains(p.Description, "omit") {
 				t.Fatalf("format should be optional with md default: %s", raw)
+			}
+		}
+		if tool.Name == "search" {
+			p := schema.Properties["engines"]
+			if p.MaxItems != len(pandaxng.Engines()) || !slices.Equal(p.Items.Enum, pandaxng.Engines()) {
+				t.Fatalf("engine schema should include all four engines: %s", raw)
 			}
 		}
 	}
@@ -145,6 +169,39 @@ func exerciseTools(t *testing.T, ctx context.Context, c *client.Client) {
 			}
 		}
 	}
+	for _, engines := range [][]string{nil, {"bing"}, pandaxng.Engines()} {
+		var request mcp.CallToolRequest
+		request.Params.Name = "search"
+		args := map[string]any{"query": "test"}
+		wantEngines := engines
+		if engines == nil {
+			wantEngines = pandaxng.Engines()
+		} else {
+			args["engines"] = engines
+		}
+		if len(engines) == 1 && engines[0] == "bing" {
+			args["max_results"] = 7
+		}
+		request.Params.Arguments = args
+		result, err := c.CallTool(ctx, request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.IsError || len(result.Content) != 1 {
+			t.Fatalf("engines %v: unexpected result %+v", engines, result)
+		}
+		text, ok := result.Content[0].(mcp.TextContent)
+		if !ok {
+			t.Fatalf("unexpected search content: %+v", result.Content)
+		}
+		var report pandaxng.Report
+		if err := json.Unmarshal([]byte(text.Text), &report); err != nil {
+			t.Fatal(err)
+		}
+		if len(report.Engines) != len(wantEngines) || len(report.Results) != 1 || report.Results[0].URL != "https://example.com/" || !slices.Equal(report.Results[0].Engines, wantEngines) {
+			t.Fatalf("engines %v: unexpected report %+v", engines, report)
+		}
+	}
 	for _, tc := range []struct{ format, want string }{
 		{"md", "# Markdown\n\nPage content\n"},
 		{"html", "<h1>Page content</h1>\n"},
@@ -173,6 +230,7 @@ func exerciseTools(t *testing.T, ctx context.Context, c *client.Client) {
 		{"search", map[string]any{"query": "test", "max_results": 0}},
 		{"search", map[string]any{"query": "test", "max_results": 1.5}},
 		{"search", map[string]any{"query": "test", "engines": []string{"google"}}},
+		{"search", map[string]any{"query": "test", "engines": []string{"duckduckgo", "brave", "yahoo", "bing", "bing"}}},
 		{"search", map[string]any{"query": "test", "unknown": true}},
 		{"search", map[string]any{"query": "test", "wait_until": "invalid"}},
 		{"search", map[string]any{"query": "test", "wait_until": ""}},

@@ -2,6 +2,7 @@ package pandaxng
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -22,7 +23,7 @@ func testOptions() Options {
 
 func TestSearchURL(t *testing.T) {
 	for _, engine := range Engines() {
-		u, err := url.Parse(searchURL(engine, "тест & Go?"))
+		u, err := url.Parse(searchURL(engine, "тест & Go?", 10))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -32,6 +33,40 @@ func TestSearchURL(t *testing.T) {
 		}
 		if u.Query().Get(parameter) != "тест & Go?" {
 			t.Fatal(u)
+		}
+		if engine == "bing" && (u.Host != "www.bing.com" || u.Path != "/search") {
+			t.Fatalf("unexpected Bing endpoint: %s", u)
+		}
+	}
+}
+
+func TestSearchLimitInURL(t *testing.T) {
+	for _, limit := range []int{1, 5, 10, 50} {
+		for _, engine := range Engines() {
+			t.Run(fmt.Sprintf("%s/%d", engine, limit), func(t *testing.T) {
+				options := testOptions()
+				options.Limit = limit
+				script := makeScript(engine, "тест & Go?", options)
+				requestJSON, _, _ := strings.Cut(strings.TrimPrefix(script, "const request = "), ";\n")
+				var request struct {
+					URL   string
+					Limit int
+				}
+				if err := json.Unmarshal([]byte(requestJSON), &request); err != nil {
+					t.Fatal(err)
+				}
+				u, err := url.Parse(request.URL)
+				if err != nil {
+					t.Fatal(err)
+				}
+				wantCount := ""
+				if engine == "bing" {
+					wantCount = fmt.Sprint(limit)
+				}
+				if u.Query().Get("count") != wantCount || request.Limit != limit {
+					t.Fatalf("unexpected limit/count in request: %s", requestJSON)
+				}
+			})
 		}
 	}
 }
@@ -79,7 +114,7 @@ func TestSearchLightpandaIntegration(t *testing.T) {
 	options := testOptions()
 	options.Timeout = 5 * time.Second
 	options.WaitUntil = "done" // This fixture explicitly waits for delayed JavaScript.
-	script := strings.Replace(makeScript("duckduckgo", "test", options), searchURL("duckduckgo", "test"), server.URL, 1)
+	script := strings.Replace(makeScript("duckduckgo", "test", options), searchURL("duckduckgo", "test", options.Limit), server.URL, 1)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, binary, "run", "-", "--log-level", "error")
@@ -108,6 +143,17 @@ func TestNormalizeURL(t *testing.T) {
 		{"brave", "https://user:password@example.com/", ""},
 		{"brave", "/relative", ""},
 		{"brave", "https://%zz/", ""},
+		{"bing", "https://example.com/a#section", "https://example.com/a"},
+		{"bing", "https://www.bing.com/ck/a?u=a1aHR0cHM6Ly9saWdodHBhbmRhLmlvLw&ntb=1", "https://lightpanda.io/"},
+		{"bing", "https://www.bing.com/ck/a?u=" + url.QueryEscape("a1"+base64.URLEncoding.EncodeToString([]byte("https://example.com/a%2Fb?q=тест#section"))), "https://example.com/a%2Fb?q=тест"},
+		{"bing", "https://bing.com/ck/a?u=https%3A%2F%2Fexample.com", "https://example.com/"},
+		{"bing", "https://evilbing.com/ck/a?u=a1aHR0cHM6Ly9saWdodHBhbmRhLmlvLw", "https://evilbing.com/ck/a?u=a1aHR0cHM6Ly9saWdodHBhbmRhLmlvLw"},
+		{"bing", "https://www.bing.com/ck/a", ""},
+		{"bing", "https://www.bing.com/ck/a?u=a1%%%", ""},
+		{"bing", "https://www.bing.com/ck/a?u=a1", ""},
+		{"bing", "https://www.bing.com/ck/a?u=" + "a1" + base64.RawURLEncoding.EncodeToString([]byte("javascript:alert(1)")), ""},
+		{"bing", "https://www.bing.com/ck/a?u=" + "a1" + base64.RawURLEncoding.EncodeToString([]byte("https://user:pass@example.com/")), ""},
+		{"bing", "https://www.bing.com/ck/a?u=" + "a1" + base64.RawURLEncoding.EncodeToString([]byte("/relative")), ""},
 	} {
 		t.Run(tc.raw, func(t *testing.T) {
 			if got := normalizeURL(tc.engine, tc.raw); got != tc.want {
@@ -150,12 +196,12 @@ func TestSearch(t *testing.T) {
 	t.Setenv("LP_PANDAXNG_TEST", "must not reach subprocess")
 	options := testOptions()
 	options.Binary = fakeBinary(t, `{"status":"ok","results":[{"url":"https://example.com#x","title":" Example "},{"url":"javascript:bad","title":"Bad"}]}`)
-	options.Engines = []string{"duckduckgo", "brave", "yahoo", "brave"}
+	options.Engines = append(Engines(), "brave")
 	report, err := Search(context.Background(), "a quote: \"; return 1; //", options)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(report.Engines) != 3 || len(report.Results) != 1 || report.Results[0].URL != "https://example.com/" || report.Results[0].Title != "Example" || !reflect.DeepEqual(report.Results[0].Engines, Engines()) {
+	if len(report.Engines) != len(Engines()) || len(report.Results) != 1 || report.Results[0].URL != "https://example.com/" || report.Results[0].Title != "Example" || !reflect.DeepEqual(report.Results[0].Engines, Engines()) {
 		t.Fatalf("unexpected report: %+v", report)
 	}
 }
@@ -177,6 +223,22 @@ func TestEngineResponses(t *testing.T) {
 				t.Fatalf("unexpected report: %+v", report)
 			}
 		})
+	}
+}
+
+func TestBingSearchNormalization(t *testing.T) {
+	options := testOptions()
+	options.Engines = []string{"bing"}
+	options.Binary = fakeBinary(t, `{"status":"ok","results":[
+{"url":"https://www.bing.com/ck/a?u=a1aHR0cHM6Ly9leGFtcGxlLmNvbS8","title":"Example"},
+{"url":"https://example.com/#fragment","title":"Duplicate"},
+{"url":"https://www.bing.com/ck/a?u=a1bad!","title":"Invalid"}]}`)
+	report, err := Search(context.Background(), "test", options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Engines[0].Status != "ok" || len(report.Results) != 1 || report.Results[0].URL != "https://example.com/" || !reflect.DeepEqual(report.Results[0].Engines, []string{"bing"}) {
+		t.Fatalf("unexpected Bing normalization: %+v", report)
 	}
 }
 

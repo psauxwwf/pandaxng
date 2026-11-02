@@ -4,6 +4,7 @@ package pandaxng
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -20,7 +21,7 @@ import (
 
 const userAgent = "AppleWebKit/537.36 (X11; Linux x86_64) (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36"
 
-func Engines() []string { return []string{"duckduckgo", "brave", "yahoo"} }
+func Engines() []string { return []string{"duckduckgo", "brave", "yahoo", "bing"} }
 
 type Options struct {
 	Engines              []string
@@ -109,7 +110,7 @@ func Search(ctx context.Context, query string, options Options) (Report, error) 
 	return report, nil
 }
 
-func searchURL(engine, query string) string {
+func searchURL(engine, query string, limit int) string {
 	endpoint, parameter := "https://html.duckduckgo.com/html/", "q"
 	values := url.Values{}
 	switch engine {
@@ -118,6 +119,9 @@ func searchURL(engine, query string) string {
 		values.Set("source", "web")
 	case "yahoo":
 		endpoint, parameter = "https://search.yahoo.com/search", "p"
+	case "bing":
+		endpoint = "https://www.bing.com/search"
+		values.Set("count", strconv.Itoa(limit))
 	}
 	values.Set(parameter, query)
 	return endpoint + "?" + values.Encode()
@@ -132,7 +136,7 @@ func makeScript(engine, query string, options Options) string {
 		Limit     int    `json:"limit"`
 		Timeout   int64  `json:"timeout"`
 		WaitUntil string `json:"waitUntil"`
-	}{searchURL(engine, query), options.Limit, options.Timeout.Milliseconds(), options.WaitUntil})
+	}{searchURL(engine, query, options.Limit), options.Limit, options.Timeout.Milliseconds(), options.WaitUntil})
 	// Engine names are validated before reading these embedded files.
 	common, _ := scripts.Files.ReadFile("common.js")
 	parser, _ := scripts.Files.ReadFile("engines/" + engine + ".js")
@@ -218,6 +222,25 @@ func normalizeURL(engine, raw string) string {
 			target, _, _ = strings.Cut(tail, "/RK=")
 			target, err = url.PathUnescape(target)
 			if err != nil {
+				return ""
+			}
+		}
+	}
+	if engine == "bing" && (host == "bing.com" || strings.HasSuffix(host, ".bing.com")) && u.Path == "/ck/a" {
+		target = u.Query().Get("u")
+		if target == "" {
+			return ""
+		}
+		if encoded, ok := strings.CutPrefix(target, "a1"); ok {
+			decoded, err := base64.URLEncoding.DecodeString(encoded)
+			if err != nil {
+				decoded, err = base64.RawURLEncoding.DecodeString(encoded)
+			}
+			if err != nil {
+				return ""
+			}
+			target = string(decoded)
+			if target == "" {
 				return ""
 			}
 		}
