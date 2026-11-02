@@ -72,6 +72,11 @@ func TestFetchValidation(t *testing.T) {
 		}
 	}
 	options.Timeout = time.Second
+	options.Format = "pdf"
+	if _, err := FetchContent(context.Background(), "https://example.com", options); err == nil || !strings.Contains(err.Error(), "format must") {
+		t.Fatalf("expected format validation, got %v", err)
+	}
+	options.Format = ""
 	options.WaitUntil = "invalid"
 	if _, err := FetchContent(context.Background(), "https://example.com", options); err == nil || !strings.Contains(err.Error(), "wait-until must") {
 		t.Fatalf("expected wait-until validation, got %v", err)
@@ -79,6 +84,28 @@ func TestFetchValidation(t *testing.T) {
 	options.WaitUntil = ""
 	if _, err := FetchContent(context.Background(), "https://example.com", options); err == nil || !strings.Contains(err.Error(), "Lightpanda not found") {
 		t.Fatalf("expected missing binary error, got %v", err)
+	}
+}
+
+func TestFetchFormats(t *testing.T) {
+	for _, tc := range []struct{ format, dump string }{
+		{"", "markdown"}, {"md", "markdown"}, {"markdown", "markdown"},
+		{"html", "html"}, {"semantic_tree_text", "semantic_tree_text"},
+	} {
+		t.Run(tc.format, func(t *testing.T) {
+			binary := fakeFetchBinary(t, `while [ "$#" -gt 0 ]; do
+if [ "$1" = '--dump' ]; then printf '%s' "$2"; exit 0; fi
+shift
+done
+exit 9
+`)
+			content, err := FetchContent(context.Background(), "https://example.com", FetchOptions{
+				Binary: binary, Timeout: time.Second, Format: tc.format,
+			})
+			if err != nil || content != tc.dump {
+				t.Fatalf("dump %q, want %q, error %v", content, tc.dump, err)
+			}
+		})
 	}
 }
 
@@ -171,6 +198,22 @@ func TestFetchLightpandaIntegration(t *testing.T) {
 		if !strings.Contains(content, text) {
 			t.Fatalf("missing %q in Markdown: %q", text, content)
 		}
+	}
+	for _, tc := range []struct{ format, marker string }{
+		{"html", "<h1>Пример</h1>"},
+		{"semantic_tree_text", "heading 'Пример'"},
+	} {
+		t.Run(tc.format, func(t *testing.T) {
+			formatted := options
+			formatted.Format = tc.format
+			content, err := FetchContent(ctx, server.URL, formatted)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(content, tc.marker) || !strings.Contains(content, "JavaScript executed") {
+				t.Fatalf("unexpected %s content: %q", tc.format, content)
+			}
+		})
 	}
 	if content, err := FetchContent(ctx, server.URL+"/missing", options); err == nil || content != "" {
 		t.Fatalf("HTTP 404 should fail: content %q, error %v", content, err)

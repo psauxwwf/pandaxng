@@ -119,12 +119,46 @@ func TestFetchArguments(t *testing.T) {
 		{"fetch", "https://example.com", "extra"},
 		{"fetch", "file:///etc/passwd"},
 		{"fetch", "https://example.com", "--timeout", "0s"},
+		{"fetch", "https://example.com", "--format", "pdf"},
 	} {
 		cmd := rootCmd()
 		cmd.SetArgs(args)
 		if err := cmd.Execute(); err == nil {
 			t.Fatalf("expected error for %v", args)
 		}
+	}
+}
+
+func TestFetchFormatCommand(t *testing.T) {
+	for _, tc := range []struct{ format, dump string }{
+		{"", "markdown"}, {"md", "markdown"}, {"markdown", "markdown"},
+		{"html", "html"}, {"semantic_tree_text", "semantic_tree_text"},
+	} {
+		t.Run(tc.format, func(t *testing.T) {
+			binary := filepath.Join(t.TempDir(), "lightpanda")
+			script := "#!/bin/sh\nwhile [ \"$#\" -gt 0 ]; do\nif [ \"$1\" = '--dump' ]; then printf '%s' \"$2\"; exit 0; fi\nshift\ndone\nexit 9\n"
+			if err := os.WriteFile(binary, []byte(script), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			cmd := rootCmd()
+			var output bytes.Buffer
+			cmd.SetOut(&output)
+			args := []string{"fetch", "https://example.com", "--lightpanda", binary}
+			if tc.format != "" {
+				args = append(args, "--format", tc.format)
+			}
+			cmd.SetArgs(args)
+			if err := cmd.Execute(); err != nil {
+				t.Fatal(err)
+			}
+			if output.String() != tc.dump {
+				t.Fatalf("output %q, want %q", output.String(), tc.dump)
+			}
+		})
+	}
+	format, err := fetchCmd().Flags().GetString("format")
+	if err != nil || format != "md" {
+		t.Fatalf("default format %q, error %v", format, err)
 	}
 }
 

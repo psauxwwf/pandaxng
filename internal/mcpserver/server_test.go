@@ -29,7 +29,17 @@ func testConfig(t *testing.T) Config {
 case " $* " in *' --block-private-networks '*) ;; *) echo 'missing network guard' >&2; exit 9 ;; esac
 echo 'browser diagnostic' >&2
 case "$1" in
-fetch) printf '# Markdown\n\nPage content\n' ;;
+fetch)
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = '--dump' ]; then dump="$2"; break; fi
+    shift
+  done
+  case "$dump" in
+    markdown) printf '# Markdown\n\nPage content\n' ;;
+    html) printf '<h1>Page content</h1>\n' ;;
+    semantic_tree_text) printf "1 RootWebArea 'Page content'\n" ;;
+    *) exit 11 ;;
+  esac ;;
 run) cat >/dev/null; printf '%s\n' '{"status":"ok","results":[{"url":"https://example.com/","title":"Example","content":"Snippet"}]}' ;;
 *) exit 10 ;;
 esac
@@ -73,10 +83,12 @@ func exerciseTools(t *testing.T, ctx context.Context, c *client.Client) {
 		var schema struct {
 			Required   []string `json:"required"`
 			Properties map[string]struct {
-				Type        string `json:"type"`
-				Description string `json:"description"`
-				Minimum     int    `json:"minimum"`
-				Maximum     int    `json:"maximum"`
+				Type        string   `json:"type"`
+				Description string   `json:"description"`
+				Minimum     int      `json:"minimum"`
+				Maximum     int      `json:"maximum"`
+				Default     any      `json:"default"`
+				Enum        []string `json:"enum"`
 			} `json:"properties"`
 		}
 		if err := json.Unmarshal(raw, &schema); err != nil {
@@ -90,6 +102,14 @@ func exerciseTools(t *testing.T, ctx context.Context, c *client.Client) {
 		}
 		if p := schema.Properties["timeout"]; p.Type != "integer" || p.Minimum != 1 || p.Maximum != 120 {
 			t.Fatalf("invalid timeout schema: %s", raw)
+		}
+		if tool.Name == "fetch_content" {
+			p, ok := schema.Properties["format"]
+			if !ok || slices.Contains(schema.Required, "format") || p.Type != "string" || p.Default != "md" ||
+				!slices.Equal(p.Enum, []string{"md", "html", "semantic_tree_text"}) ||
+				!strings.Contains(p.Description, "Optional") || !strings.Contains(p.Description, "omit") {
+				t.Fatalf("format should be optional with md default: %s", raw)
+			}
 		}
 	}
 	slices.Sort(names)
@@ -125,6 +145,26 @@ func exerciseTools(t *testing.T, ctx context.Context, c *client.Client) {
 			}
 		}
 	}
+	for _, tc := range []struct{ format, want string }{
+		{"md", "# Markdown\n\nPage content\n"},
+		{"html", "<h1>Page content</h1>\n"},
+		{"semantic_tree_text", "1 RootWebArea 'Page content'\n"},
+	} {
+		var request mcp.CallToolRequest
+		request.Params.Name = "fetch_content"
+		request.Params.Arguments = map[string]any{"url": "https://example.com", "format": tc.format}
+		result, err := c.CallTool(ctx, request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.IsError || len(result.Content) != 1 {
+			t.Fatalf("%s: unexpected result %+v", tc.format, result)
+		}
+		text, ok := result.Content[0].(mcp.TextContent)
+		if !ok || text.Text != tc.want {
+			t.Fatalf("%s: unexpected content %+v", tc.format, result.Content)
+		}
+	}
 	for _, tc := range []struct {
 		name string
 		args map[string]any
@@ -144,6 +184,10 @@ func exerciseTools(t *testing.T, ctx context.Context, c *client.Client) {
 		{"search", map[string]any{"query": "test", "timeout": nil}},
 		{"fetch_content", map[string]any{"url": "file:///etc/passwd"}},
 		{"fetch_content", map[string]any{"url": 123}},
+		{"fetch_content", map[string]any{"url": "https://example.com", "format": "pdf"}},
+		{"fetch_content", map[string]any{"url": "https://example.com", "format": ""}},
+		{"fetch_content", map[string]any{"url": "https://example.com", "format": nil}},
+		{"fetch_content", map[string]any{"url": "https://example.com", "format": 123}},
 		{"fetch_content", map[string]any{"url": "https://example.com", "wait_until": "invalid"}},
 		{"fetch_content", map[string]any{"url": "https://example.com", "timeout": 0}},
 		{"fetch_content", map[string]any{"url": "https://example.com", "timeout": -1}},

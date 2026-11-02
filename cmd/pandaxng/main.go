@@ -93,7 +93,7 @@ func fetchCmd() *cobra.Command {
 	var options pandaxng.FetchOptions
 	cmd := &cobra.Command{
 		Use:   "fetch URL",
-		Short: "Fetch a page through Lightpanda and print Markdown",
+		Short: "Fetch a page through Lightpanda as Markdown, HTML or a text semantic tree",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			content, err := pandaxng.FetchContent(cmd.Context(), args[0], options)
@@ -105,6 +105,7 @@ func fetchCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().DurationVar(&options.Timeout, "timeout", pandaxng.DefaultFetchTimeout, "fetch timeout (1s–2m)")
+	cmd.Flags().StringVar(&options.Format, "format", pandaxng.DefaultFetchFormat, "output format: md, html, semantic_tree_text (markdown is an alias for md)")
 	waitUntilFlag(cmd, &options.WaitUntil, pandaxng.DefaultFetchWaitUntil)
 	cmd.Flags().StringVar(&options.Language, "language", "en-US", "browser locale")
 	cmd.Flags().StringVar(&options.Binary, "lightpanda", "lightpanda", "Lightpanda executable")

@@ -7,7 +7,8 @@
 ## Установка и сборка
 
 CLI на Go с **Cobra + Fang**. Без встроенной LLM и конфигурационных
-файлов: запрос → Lightpanda → JSON/Markdown. Есть MCP-сервер на `mcp-go`.
+файлов: запрос → Lightpanda → JSON/Markdown/HTML/текстовое семантическое дерево.
+Есть MCP-сервер на `mcp-go`.
 JS-парсеры встроены в бинарник через `go:embed`.
 
 Требования:
@@ -33,7 +34,8 @@ go build -o bin/pandaxng ./cmd/pandaxng
 ## Использование
 
 Три команды без алиасов: `search` для поиска (JSON), `fetch` для чтения страницы
-(Markdown), `mcp` для запуска MCP-сервера.
+(Markdown по умолчанию, также HTML или текстовое семантическое дерево),
+`mcp` для запуска MCP-сервера.
 
 `search`, `fetch` и `mcp` поддерживают `--wait-until`. Значения по умолчанию
 одинаковы для CLI и MCP-инструментов:
@@ -103,14 +105,30 @@ go build -o bin/pandaxng ./cmd/pandaxng
 ./bin/pandaxng fetch 'https://example.com' --timeout 30s --language ru-RU
 ./bin/pandaxng fetch 'https://example.com' --wait-until load
 ./bin/pandaxng fetch 'https://example.com/article' > article.md
+./bin/pandaxng fetch 'https://example.com' --format html > page.html
+./bin/pandaxng fetch 'https://example.com' --format semantic_tree_text
 ```
 
-Запускает `lightpanda fetch --dump markdown --log-format pretty --log-level info`
+Флаг `--format` выбирает формат вывода:
+
+| Формат | Содержимое |
+|---|---|
+| `md` (по умолчанию) | Markdown; `markdown` — синоним в CLI |
+| `html` | HTML DOM после выполнения JavaScript, не исходный HTTP-ответ |
+| `semantic_tree_text` | Сокращённое текстовое семантическое дерево с ролями и элементами интерфейса |
+
+Семантическое дерево полезно для описания интерфейса, но может не содержать
+адресов ссылок и хуже сохранять форматирование кода. Для чтения страниц
+обычно удобнее `md`.
+
+Запускает `lightpanda fetch --dump <формат> --log-format pretty --log-level info`
+(`md` преобразуется в `markdown`)
 с теми же User-Agent и TLS-флагом, что и поиск. По умолчанию режим `done`,
 таймаут 40 секунд. Страница загружается с выполнением
-JavaScript, выводится Markdown целиком (без JSON). Логи Lightpanda не смешиваются
+JavaScript, содержимое выводится целиком в выбранном формате (без JSON-обёртки).
+Логи Lightpanda не смешиваются
 с содержимым; при сбое диагностика выводится в stderr, код завершения — `1`.
-HTTP 4xx/5xx считаются ошибками. Поддерживаются `--timeout`, `--wait-until`, `--language`,
+HTTP 4xx/5xx считаются ошибками. Поддерживаются `--format`, `--timeout`, `--wait-until`, `--language`,
 `--lightpanda`; `Ctrl+C` останавливает процесс.
 
 CLI-команда `fetch` и MCP-инструмент `fetch_content` используют одну реализацию.
@@ -141,7 +159,7 @@ CLI-команда `fetch` и MCP-инструмент `fetch_content` испо�
 | Tool | Параметры | Результат |
 |---|---|---|
 | `search` | `query` (обязательно), `max_results` (1–50, по умолчанию 10 на движок), `engines` (массив, по умолчанию все три), `language`, `wait_until`, `timeout` | JSON с объединённой выдачей и статусами движков; также в `structuredContent` |
-| `fetch_content` | `url` (обязательно), `language`, `wait_until`, `timeout` | Markdown страницы после выбранного события загрузки |
+| `fetch_content` | `url` (обязательно), `format` (необязательно: `md`, `html`, `semantic_tree_text`; по умолчанию `md`), `language`, `wait_until`, `timeout` | Содержимое страницы в выбранном формате после выбранного события загрузки |
 
 Серверные флаги `--lightpanda`, `--timeout`, `--language`, `--wait-until` задают
 общие настройки. Без этих флагов используются разные значения для инструментов:
@@ -155,6 +173,19 @@ CLI-команда `fetch` и MCP-инструмент `fetch_content` испо�
 Приоритет: аргумент MCP-запроса → серверный флаг → стандартное значение инструмента.
 
 Примеры аргументов MCP-инструментов:
+
+Параметр `format` у `fetch_content` **необязательный**: если его не передавать,
+вернётся Markdown (`md`), как и в CLI. Для HTML передайте:
+
+```json
+{"url": "https://example.com", "format": "html"}
+```
+
+Для текстового семантического дерева:
+
+```json
+{"url": "https://example.com", "format": "semantic_tree_text"}
+```
 
 ```json
 {"query": "lightpanda browser"}

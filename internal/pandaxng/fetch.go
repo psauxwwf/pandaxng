@@ -17,10 +17,15 @@ type FetchOptions struct {
 	Timeout              time.Duration
 	Language             string
 	WaitUntil            string
+	Format               string
 	BlockPrivateNetworks bool
 }
 
-// FetchContent loads an HTTP(S) page with JavaScript and returns its Markdown dump.
+const DefaultFetchFormat = "md"
+
+func FetchFormats() []string { return []string{"md", "html", "semantic_tree_text"} }
+
+// FetchContent loads an HTTP(S) page with JavaScript and returns its selected dump.
 // This local CLI helper permits private network URLs; it is not an SSRF boundary.
 func FetchContent(ctx context.Context, rawURL string, options FetchOptions) (string, error) {
 	u, err := url.Parse(rawURL)
@@ -29,6 +34,15 @@ func FetchContent(ctx context.Context, rawURL string, options FetchOptions) (str
 	}
 	if options.Timeout < time.Second || options.Timeout > 2*time.Minute {
 		return "", fmt.Errorf("timeout must be between 1s and 2m")
+	}
+	var dump string
+	switch options.Format {
+	case "", "md", "markdown":
+		dump = "markdown"
+	case "html", "semantic_tree_text":
+		dump = options.Format
+	default:
+		return "", fmt.Errorf("format must be one of: %s (markdown is an alias for md)", strings.Join(FetchFormats(), ", "))
 	}
 	waitUntil, err := NormalizeWaitUntil(options.WaitUntil, DefaultFetchWaitUntil)
 	if err != nil {
@@ -42,7 +56,7 @@ func FetchContent(ctx context.Context, rawURL string, options FetchOptions) (str
 	defer cancel()
 	millis := strconv.FormatInt(options.Timeout.Milliseconds(), 10)
 	args := []string{"fetch",
-		"--log-format", "pretty", "--log-level", "info", "--dump", "markdown",
+		"--log-format", "pretty", "--log-level", "info", "--dump", dump,
 		"--user-agent", userAgent, "--insecure-disable-tls-host-verification",
 		"--locale", options.Language, "--http-timeout", millis, "--watchdog-ms", millis,
 		"--wait-until", waitUntil, "--wait-ms", millis, "--terminate-ms", millis,
