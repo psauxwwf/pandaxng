@@ -28,6 +28,14 @@ tasks:
     cmds:
       - mkdir -p "{{.BIN}}"
 
+  check:
+    desc: Run Go static analysis
+    dir: "{{.ROOT_DIR}}"
+    cmds:
+      - "{{.GOBIN}} vet ./..."
+      - "{{.GOBIN}} fmt ./..."
+      - "{{.GOBIN}} fix ./..."
+
   build:
     desc: Build the static Linux amd64 binary
     dir: "{{.ROOT_DIR}}"
