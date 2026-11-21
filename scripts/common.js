@@ -84,7 +84,7 @@ async function search(config) {
     await page.goto(request.url, { timeout: request.timeout, waitUntil: request.waitUntil });
     // evaluate returns JSON text, unlike extract's native object return value.
     const script = `(${collectResults.toString()})(${JSON.stringify(config)}, ${request.limit})`;
-    return JSON.parse(page.evaluate(script));
+    return JSON.parse(await page.evaluate(script));
   } finally {
     // A failed goto can invalidate the page handle; don't mask its error.
     try {
