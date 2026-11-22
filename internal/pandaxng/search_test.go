@@ -237,6 +237,9 @@ func fakeBinary(t *testing.T, response string) string {
 		"test -z \"$LP_PANDAXNG_TEST\" || exit 9\n" +
 		"test \"$1 $2\" = 'run -' || exit 10\n" +
 		"case \"$*\" in *--insecure-disable-tls-host-verification*) ;; *) exit 11 ;; esac\n" +
+		"count=0\nfor arg in \"$@\"; do\n" +
+		"  if [ \"$previous\" = '--adblock-lists' ]; then test -r \"$arg\" || exit 13; count=$((count+1)); fi\n" +
+		"  previous=\"$arg\"\ndone\ntest \"$count\" -eq 2 || exit 14\n" +
 		"input=$(cat)\ncase \"$input\" in *'const request = '*'function collectResults'*) ;; *) exit 12 ;; esac\n" +
 		"cat <<'JSON'\n" + response + "\nJSON\n"
 	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
@@ -266,6 +269,11 @@ func TestSearch(t *testing.T) {
 }
 
 func TestEngineResponses(t *testing.T) {
+	adblockArgs, cleanup, err := writeAdblockLists()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
 	for _, tc := range []struct{ response, status string }{
 		{`{"status":"empty","results":[]}`, "empty"},
 		{`{"status":"blocked","results":[]}`, "blocked"},
@@ -277,7 +285,7 @@ func TestEngineResponses(t *testing.T) {
 		t.Run(tc.response, func(t *testing.T) {
 			options := testOptions()
 			options.Binary = fakeBinary(t, tc.response)
-			report := runEngine(context.Background(), "brave", "test", options)
+			report := runEngine(context.Background(), "brave", "test", options, adblockArgs, nil)
 			if report.Status != tc.status || report.Results == nil {
 				t.Fatalf("unexpected report: %+v", report)
 			}

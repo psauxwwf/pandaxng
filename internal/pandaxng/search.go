@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"os"
 	"os/exec"
 	"slices"
 	"strconv"
@@ -32,6 +33,8 @@ type Options struct {
 	WaitUntil            string
 	Binary               string
 	BlockPrivateNetworks bool
+	DisableAdblock       bool
+	SharedAdblock        *SharedAdblockLists
 }
 
 type Result struct {
@@ -86,6 +89,11 @@ func Search(ctx context.Context, query string, options Options) (Report, error) 
 		return report, fmt.Errorf("Lightpanda not found: %w", err)
 	}
 	options.Binary = binary
+	adblockArgs, adblockFiles, cleanup, err := prepareAdblockLists(options.DisableAdblock, options.SharedAdblock)
+	if err != nil {
+		return report, err
+	}
+	defer cleanup()
 	reports := make([]EngineReport, len(engines))
 	semaphore := make(chan struct{}, options.Jobs)
 	var group sync.WaitGroup
@@ -94,7 +102,7 @@ func Search(ctx context.Context, query string, options Options) (Report, error) 
 			select {
 			case semaphore <- struct{}{}:
 				defer func() { <-semaphore }()
-				reports[i] = runEngine(ctx, engine, query, options)
+				reports[i] = runEngine(ctx, engine, query, options, adblockArgs, adblockFiles)
 			case <-ctx.Done():
 				reports[i] = EngineReport{Status: "error", Results: []Result{}, Error: ctx.Err().Error()}
 			}
@@ -141,7 +149,7 @@ func makeScript(engine, query string, options Options) string {
 	return "const request = " + string(request) + ";\n" + string(common) + "\n" + string(parser)
 }
 
-func runEngine(ctx context.Context, engine, query string, options Options) (report EngineReport) {
+func runEngine(ctx context.Context, engine, query string, options Options, adblockArgs []string, adblockFiles []*os.File) (report EngineReport) {
 	started := time.Now()
 	report = EngineReport{Status: "error", Results: []Result{}}
 	defer func() { report.Elapsed = time.Since(started).Seconds() }()
@@ -152,6 +160,8 @@ func runEngine(ctx context.Context, engine, query string, options Options) (repo
 		"--user-agent", userAgent, "--insecure-disable-tls-host-verification",
 		"--locale", options.Language, "--http-timeout", millis, "--watchdog-ms", millis,
 		"--http-max-response-size", "16777216", "--v8-max-heap-mb", "256", "--log-level", "error")
+	cmd.Args = append(cmd.Args, adblockArgs...)
+	cmd.ExtraFiles = adblockFiles
 	if options.BlockPrivateNetworks {
 		cmd.Args = append(cmd.Args, "--block-private-networks")
 	}

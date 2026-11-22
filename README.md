@@ -14,7 +14,8 @@ JS parsers are embedded in the binary using `go:embed`.
 Requirements:
 
 - Go 1.27+ to build; Go is not required to run the compiled binary.
-- Lightpanda with the `run` and `fetch` commands and PandaScript `Page` (tested with 1.0.1).
+- Lightpanda with the `run` and `fetch` commands, PandaScript `Page`, and
+  `--adblock-lists` (verified with 1.0.5).
   Installation: <https://lightpanda.io/docs/run-locally/installation/one-liner>.
 
 Build: `task build` → `bin/pandaxng` (Linux amd64,
@@ -67,6 +68,7 @@ waiting longer does not fix network errors or unavailable IPv6 connectivity.
 ./bin/pandaxng search 'lightpanda browser' --engines brave --limit 5 --timeout 25s
 ./bin/pandaxng search 'lightpanda browser' --engines bing --limit 5
 ./bin/pandaxng search 'lightpanda browser' --engines yahoo --wait-until networkalmostidle
+./bin/pandaxng search 'lightpanda browser' --disable-adblock
 ./bin/pandaxng search --list-engines
 ./bin/pandaxng --help
 ```
@@ -83,6 +85,7 @@ four concurrent browsers, `domcontentloaded`, 20 seconds per engine, language `e
 | `--wait-until`   | Page wait mode from the table above (default: `domcontentloaded`)          |
 | `--language`     | Browser language (default: `en-US`)                                       |
 | `--lightpanda`   | Path to the executable (default: `lightpanda` from PATH)                    |
+| `--disable-adblock` | Disable the embedded EasyList and EasyPrivacy filters                   |
 | `--list-engines` | List supported engines without searching                                  |
 
 Output is JSON grouped by the selected engine names, identical for the CLI
@@ -138,6 +141,7 @@ and values above 10 do not guarantee more results without pagination.
 ./bin/pandaxng fetch 'https://example.com/article' > article.md
 ./bin/pandaxng fetch 'https://example.com' --format html > page.html
 ./bin/pandaxng fetch 'https://example.com' --format semantic_tree_text
+./bin/pandaxng fetch 'https://example.com' --disable-adblock
 ```
 
 The `--format` flag selects the output format:
@@ -159,7 +163,7 @@ with a 40-second timeout. The page is loaded with JavaScript
 execution, and its full content is printed in the selected format (without a JSON wrapper).
 Lightpanda logs are kept separate
 from the content; on failure, diagnostics go to stderr and the exit code is `1`.
-HTTP 4xx/5xx responses are treated as errors. Supports `--format`, `--timeout`, `--wait-until`, `--language`,
+HTTP 4xx/5xx responses are treated as errors. Supports `--format`, `--timeout`, `--wait-until`, `--language`, `--disable-adblock`,
 and `--lightpanda`; `Ctrl+C` stops the process.
 
 The CLI `fetch` command and the MCP `fetch_content` tool share the same implementation.
@@ -179,6 +183,7 @@ Uses [`mark3labs/mcp-go`](https://github.com/mark3labs/mcp-go).
 ./bin/pandaxng mcp
 ./bin/pandaxng mcp --transport stdio
 ./bin/pandaxng mcp --wait-until networkalmostidle
+./bin/pandaxng mcp --disable-adblock
 
 # Streamable HTTP, endpoint http://127.0.0.1:8080/mcp
 ./bin/pandaxng mcp --transport http
@@ -189,8 +194,8 @@ Both transports expose the same tools:
 
 | Tool            | Parameters                                                                                                                                                                                                   | Result                                                                                                   |
 | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
-| `search`        | `query` (required), `max_results` (1–50, default: 10 per engine), `engines` (array of 1–4 entries: `duckduckgo`, `brave`, `yahoo`, `bing`; defaults to all four), `language`, `wait_until`, `timeout` | JSON keyed by engine name: each engine's own `results`, `status`, and diagnostics; also in `structuredContent` |
-| `fetch_content` | `url` (required), `format` (optional: `md`, `html`, `semantic_tree_text`; default: `md`), `language`, `wait_until`, `timeout`                                                                                    | Page content in the selected format after the selected load event                                         |
+| `search`        | `query` (required), `max_results` (1–50, default: 10 per engine), `engines` (array of 1–4 entries: `duckduckgo`, `brave`, `yahoo`, `bing`; defaults to all four), `language`, `wait_until`, `timeout`, `disable_adblock` | JSON keyed by engine name: each engine's own `results`, `status`, and diagnostics; also in `structuredContent` |
+| `fetch_content` | `url` (required), `format` (optional: `md`, `html`, `semantic_tree_text`; default: `md`), `language`, `wait_until`, `timeout`, `disable_adblock`                                                                                    | Page content in the selected format after the selected load event                                         |
 
 The server flags `--lightpanda`, `--timeout`, `--language`, and `--wait-until` set
 shared options. Without these flags, the tools use different defaults:
@@ -202,6 +207,11 @@ omit them to use the server settings.
 `timeout` is an integer number of seconds from 1 to 120 (per engine for search),
 overriding the browser timeout and the overall deadline for the call, including slot wait time.
 Precedence: MCP request argument → server flag → tool default.
+
+Adblock is enabled by default. For either tool, the optional boolean
+`disable_adblock: true` disables it for that call. The server flag
+`mcp --disable-adblock` disables it by default; an explicit
+`disable_adblock: false` re-enables it for an individual call.
 
 Example MCP tool arguments:
 
@@ -224,6 +234,10 @@ For a text semantic tree:
 
 ```json
 { "query": "lightpanda browser", "engines": ["bing"] }
+```
+
+```json
+{ "url": "https://example.com", "disable_adblock": true }
 ```
 
 ```json
@@ -297,6 +311,27 @@ Every invocation uses these flags:
 --user-agent "AppleWebKit/537.36 (X11; Linux x86_64) (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36"
 --insecure-disable-tls-host-verification
 ```
+
+By default, search and fetch also pass embedded EasyList and EasyPrivacy to Lightpanda using
+`--adblock-lists`. CLI search and fetch copy the lists to a private temporary
+directory for the operation and remove it afterwards. MCP prepares the lists
+once at server startup and shares them across requests, including when the
+server starts with `--disable-adblock` (individual requests may re-enable it).
+On Linux, MCP uses anonymous in-memory files via `/proc/self/fd`; they disappear
+after the server and any browser processes using them exit, including after
+`kill -9`. On other platforms MCP uses temporary files removed on normal
+shutdown; a forced termination can leave them behind. `--disable-adblock`
+skips applying the lists for the operation. They block matching network requests,
+not necessarily ads already present in page HTML. Rules can break sites or
+search results. No list download occurs at runtime; updating the embedded
+snapshot requires replacing the files and rebuilding PandaXNG.
+
+The lists are unmodified snapshots by **The EasyList authors**
+(<https://easylist.to/>), downloaded from
+<https://easylist.to/easylist/easylist.txt> and
+<https://easylist.to/easylist/easyprivacy.txt>. They are distributed under
+the [EasyList licence terms](https://easylist.to/pages/licence.html), including
+[CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/).
 
 **Warning:** the second flag disables TLS certificate hostname verification.
 It is enabled at the user's request and reduces connection security.

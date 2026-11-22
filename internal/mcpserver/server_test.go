@@ -29,6 +29,12 @@ func testConfig(t *testing.T) Config {
 	// Every MCP browser must receive the network guard. Logs must stay out of results.
 	script := `#!/bin/sh
 case " $* " in *' --block-private-networks '*) ;; *) echo 'missing network guard' >&2; exit 9 ;; esac
+count=0
+for arg in "$@"; do
+  if [ "$previous" = '--adblock-lists' ]; then test -r "$arg" || exit 15; count=$((count+1)); fi
+  previous="$arg"
+done
+test "$count" -eq 2 || exit 16
 echo 'browser diagnostic' >&2
 case "$1" in
 fetch)
@@ -122,6 +128,9 @@ func exerciseTools(t *testing.T, ctx context.Context, c *client.Client) {
 			if !ok || slices.Contains(schema.Required, name) || !strings.Contains(property.Description, "Optional") || !strings.Contains(property.Description, "omit") {
 				t.Fatalf("%s: %s should be explicitly optional: %s", tool.Name, name, raw)
 			}
+		}
+		if p, ok := schema.Properties["disable_adblock"]; !ok || slices.Contains(schema.Required, "disable_adblock") || p.Type != "boolean" || p.Default != false {
+			t.Fatalf("%s: disable_adblock must be an optional boolean defaulting to false: %s", tool.Name, raw)
 		}
 		if p := schema.Properties["timeout"]; p.Type != "integer" || p.Minimum != 1 || p.Maximum != 120 {
 			t.Fatalf("invalid timeout schema: %s", raw)
@@ -287,6 +296,8 @@ func exerciseTools(t *testing.T, ctx context.Context, c *client.Client) {
 		{"search", map[string]any{"query": "test", "timeout": 1.5}},
 		{"search", map[string]any{"query": "test", "timeout": "60s"}},
 		{"search", map[string]any{"query": "test", "timeout": nil}},
+		{"search", map[string]any{"query": "test", "disable_adblock": "true"}},
+		{"search", map[string]any{"query": "test", "disable_adblock": nil}},
 		{"fetch_content", map[string]any{"url": "file:///etc/passwd"}},
 		{"fetch_content", map[string]any{"url": 123}},
 		{"fetch_content", map[string]any{"url": "https://example.com", "format": "pdf"}},
@@ -300,6 +311,8 @@ func exerciseTools(t *testing.T, ctx context.Context, c *client.Client) {
 		{"fetch_content", map[string]any{"url": "https://example.com", "timeout": 1.5}},
 		{"fetch_content", map[string]any{"url": "https://example.com", "timeout": "60s"}},
 		{"fetch_content", map[string]any{"url": "https://example.com", "timeout": nil}},
+		{"fetch_content", map[string]any{"url": "https://example.com", "disable_adblock": 1}},
+		{"fetch_content", map[string]any{"url": "https://example.com", "disable_adblock": nil}},
 	} {
 		var request mcp.CallToolRequest
 		request.Params.Name, request.Params.Arguments = tc.name, tc.args
@@ -308,6 +321,98 @@ func exerciseTools(t *testing.T, ctx context.Context, c *client.Client) {
 		if err == nil && !result.IsError {
 			t.Fatalf("expected failure for %s %v: %+v", tc.name, tc.args, result)
 		}
+	}
+}
+
+func TestMCPDisableAdblock(t *testing.T) {
+	binary := filepath.Join(t.TempDir(), "lightpanda")
+	script := `#!/bin/sh
+case " $* " in *' --adblock-lists '*) state=enabled ;; *) state=disabled ;; esac
+case "$1" in
+  run) printf '{"status":"ok","results":[{"url":"https://example.com/","title":"%s"}]}\n' "$state" ;;
+  fetch) printf '%s' "$state" ;;
+  *) exit 9 ;;
+esac
+`
+	if err := os.WriteFile(binary, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, serverDisabled := range []bool{false, true} {
+		t.Run(strconv.FormatBool(serverDisabled), func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			input, toServer := io.Pipe()
+			fromServer, output := io.Pipe()
+			defer input.Close()
+			defer fromServer.Close()
+			done := make(chan error, 1)
+			config := Config{Transport: "stdio", Binary: binary, Language: "en-US", DisableAdblock: serverDisabled}
+			go func() {
+				err := Serve(ctx, config, input, output, io.Discard)
+				output.Close()
+				done <- err
+			}()
+			c := client.NewClient(transport.NewIO(fromServer, toServer, nil))
+			defer c.Close()
+			initialize(t, ctx, c)
+			listed, err := c.ListTools(ctx, mcp.ListToolsRequest{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, tool := range listed.Tools {
+				raw, err := json.Marshal(tool.InputSchema)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var schema struct {
+					Properties map[string]struct {
+						Default any `json:"default"`
+					} `json:"properties"`
+				}
+				if err := json.Unmarshal(raw, &schema); err != nil {
+					t.Fatal(err)
+				}
+				if property := schema.Properties["disable_adblock"]; property.Default != serverDisabled {
+					t.Fatalf("%s: unexpected disable_adblock default: %s", tool.Name, raw)
+				}
+			}
+			for _, name := range []string{"search", "fetch_content"} {
+				for _, value := range []any{nil, false, true} {
+					args := map[string]any{"url": "https://example.com"}
+					if name == "search" {
+						args = map[string]any{"query": "test", "engines": []string{"bing"}}
+					}
+					disabled := serverDisabled
+					if value != nil {
+						args["disable_adblock"] = value
+						disabled = value.(bool)
+					}
+					var request mcp.CallToolRequest
+					request.Params.Name, request.Params.Arguments = name, args
+					result, err := c.CallTool(ctx, request)
+					if err != nil || result.IsError || len(result.Content) != 1 {
+						t.Fatalf("%s %v: unexpected result %+v, error %v", name, value, result, err)
+					}
+					text, ok := result.Content[0].(mcp.TextContent)
+					want := "enabled"
+					if disabled {
+						want = "disabled"
+					}
+					if !ok || !strings.Contains(text.Text, want) {
+						t.Fatalf("%s %v: expected %s: %+v", name, value, want, result.Content)
+					}
+				}
+			}
+			c.Close()
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-ctx.Done():
+				t.Fatal("stdio did not stop at EOF")
+			}
+		})
 	}
 }
 

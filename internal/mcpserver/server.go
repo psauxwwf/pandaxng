@@ -27,6 +27,8 @@ type Config struct {
 	Language           string
 	WaitUntil          string // Empty keeps the separate search/fetch defaults.
 	DisablePrivateURLs bool
+	DisableAdblock     bool
+	sharedAdblock      *pandaxng.SharedAdblockLists
 }
 
 func New(config Config) (*server.MCPServer, error) {
@@ -64,14 +66,16 @@ func New(config Config) (*server.MCPServer, error) {
 		mcp.WithString("language", mcp.Description("Browser locale; defaults to the server locale")),
 		mcp.WithString("wait_until", mcp.Enum(pandaxng.WaitUntilModes()...), mcp.Description(fmt.Sprintf("Optional wait state; omit to use the server default (%s)", searchWaitUntil))),
 		mcp.WithInteger("timeout", mcp.Min(1), mcp.Max(120), mcp.Description(fmt.Sprintf("Optional timeout per engine in seconds (1–120); omit to use the server default (%g seconds)", searchTimeout.Seconds()))),
+		mcp.WithBoolean("disable_adblock", mcp.DefaultBool(config.DisableAdblock), mcp.Description("Optional: disable EasyList and EasyPrivacy filtering; omit to use the server default")),
 	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		args := struct {
-			Query      string   `json:"query"`
-			MaxResults int      `json:"max_results"`
-			Engines    []string `json:"engines"`
-			Language   string   `json:"language"`
-			WaitUntil  string   `json:"wait_until"`
-		}{MaxResults: 10, Engines: pandaxng.Engines(), Language: config.Language, WaitUntil: searchWaitUntil}
+			Query          string   `json:"query"`
+			MaxResults     int      `json:"max_results"`
+			Engines        []string `json:"engines"`
+			Language       string   `json:"language"`
+			WaitUntil      string   `json:"wait_until"`
+			DisableAdblock bool     `json:"disable_adblock"`
+		}{MaxResults: 10, Engines: pandaxng.Engines(), Language: config.Language, WaitUntil: searchWaitUntil, DisableAdblock: config.DisableAdblock}
 		if err := request.BindArguments(&args); err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -84,6 +88,8 @@ func New(config Config) (*server.MCPServer, error) {
 			Timeout: timeout, Jobs: 4, Language: args.Language,
 			WaitUntil:            args.WaitUntil,
 			BlockPrivateNetworks: config.DisablePrivateURLs,
+			DisableAdblock:       args.DisableAdblock,
+			SharedAdblock:        config.sharedAdblock,
 		})
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
@@ -106,13 +112,15 @@ func New(config Config) (*server.MCPServer, error) {
 		mcp.WithString("language", mcp.Description("Browser locale; defaults to the server locale")),
 		mcp.WithString("wait_until", mcp.Enum(pandaxng.WaitUntilModes()...), mcp.Description(fmt.Sprintf("Optional wait state; omit to use the server default (%s)", fetchWaitUntil))),
 		mcp.WithInteger("timeout", mcp.Min(1), mcp.Max(120), mcp.Description(fmt.Sprintf("Optional fetch timeout in seconds (1–120); omit to use the server default (%g seconds)", fetchTimeout.Seconds()))),
+		mcp.WithBoolean("disable_adblock", mcp.DefaultBool(config.DisableAdblock), mcp.Description("Optional: disable EasyList and EasyPrivacy filtering; omit to use the server default")),
 	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		args := struct {
-			URL       string `json:"url"`
-			Format    string `json:"format"`
-			Language  string `json:"language"`
-			WaitUntil string `json:"wait_until"`
-		}{Language: config.Language, WaitUntil: fetchWaitUntil, Format: pandaxng.DefaultFetchFormat}
+			URL            string `json:"url"`
+			Format         string `json:"format"`
+			Language       string `json:"language"`
+			WaitUntil      string `json:"wait_until"`
+			DisableAdblock bool   `json:"disable_adblock"`
+		}{Language: config.Language, WaitUntil: fetchWaitUntil, Format: pandaxng.DefaultFetchFormat, DisableAdblock: config.DisableAdblock}
 		if err := request.BindArguments(&args); err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -125,6 +133,8 @@ func New(config Config) (*server.MCPServer, error) {
 			Format:               args.Format,
 			WaitUntil:            args.WaitUntil,
 			BlockPrivateNetworks: config.DisablePrivateURLs,
+			DisableAdblock:       args.DisableAdblock,
+			SharedAdblock:        config.sharedAdblock,
 		})
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
@@ -180,6 +190,12 @@ func Serve(ctx context.Context, config Config, stdin io.Reader, stdout, stderr i
 	if config.Transport != "stdio" && config.Transport != "http" {
 		return fmt.Errorf("transport must be stdio or http")
 	}
+	lists, err := pandaxng.NewSharedAdblockLists()
+	if err != nil {
+		return err
+	}
+	defer lists.Close()
+	config.sharedAdblock = lists
 	s, err := New(config)
 	if err != nil {
 		return err

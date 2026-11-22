@@ -29,6 +29,13 @@ func TestFetchContent(t *testing.T) {
 	t.Setenv("PANDAXNG_FETCH_ARGS", argsPath)
 	t.Setenv("LP_PANDAXNG_TEST", "must not be inherited")
 	binary := fakeFetchBinary(t, `test -z "$LP_PANDAXNG_TEST" || exit 9
+for arg in "$@"; do
+  if [ "$previous" = '--adblock-lists' ]; then
+    test -r "$arg" || exit 10
+    grep -q '^\[Adblock Plus' "$arg" || exit 11
+  fi
+  previous="$arg"
+done
 printf '%s\n' "$@" > "$PANDAXNG_FETCH_ARGS"
 printf 'browser log\n' >&2
 printf '# Заголовок\n\n[Ссылка](https://example.com/)\n'
@@ -46,6 +53,20 @@ printf '# Заголовок\n\n[Ссылка](https://example.com/)\n'
 		t.Fatal(err)
 	}
 	args := strings.Split(strings.TrimSuffix(string(raw), "\n"), "\n")
+	if len(args) < 5 {
+		t.Fatalf("missing adblock arguments: %q", args)
+	}
+	listArgs := args[len(args)-5 : len(args)-1]
+	if listArgs[0] != "--adblock-lists" || filepath.Base(listArgs[1]) != "easylist.txt" ||
+		listArgs[2] != "--adblock-lists" || filepath.Base(listArgs[3]) != "easyprivacy.txt" {
+		t.Fatalf("unexpected adblock arguments: %q", listArgs)
+	}
+	for _, path := range []string{listArgs[1], listArgs[3]} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("temporary list was not removed: %s: %v", path, err)
+		}
+	}
+	args = append(args[:len(args)-5], args[len(args)-1])
 	want := []string{"fetch", "--log-format", "pretty", "--log-level", "info", "--dump", "markdown",
 		"--user-agent", userAgent, "--insecure-disable-tls-host-verification",
 		"--locale", "ru-RU", "--http-timeout", "20000", "--watchdog-ms", "20000",

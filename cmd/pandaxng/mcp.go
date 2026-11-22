@@ -28,5 +28,6 @@ func mcpCmd() *cobra.Command {
 	cmd.Flags().Lookup("wait-until").Usage += "; defaults: search domcontentloaded, fetch done"
 	cmd.Flags().StringVar(&config.Language, "language", "en-US", "default browser locale")
 	cmd.Flags().BoolVar(&config.DisablePrivateURLs, "disable-private-urls", false, "block browser requests to private networks")
+	cmd.Flags().BoolVar(&config.DisableAdblock, "disable-adblock", false, "disable adblock by default for MCP tools")
 	return cmd
 }

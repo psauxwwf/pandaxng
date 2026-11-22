@@ -85,6 +85,7 @@ func searchCmd() *cobra.Command {
 	cmd.Flags().IntVar(&options.Jobs, "jobs", 4, "parallel browsers (1–4)")
 	cmd.Flags().StringVar(&options.Language, "language", "en-US", "browser locale")
 	cmd.Flags().StringVar(&options.Binary, "lightpanda", "lightpanda", "Lightpanda executable")
+	cmd.Flags().BoolVar(&options.DisableAdblock, "disable-adblock", false, "disable EasyList and EasyPrivacy filtering")
 	cmd.Flags().BoolVar(&listEngines, "list-engines", false, "list supported engines")
 	return cmd
 }
@@ -109,6 +110,7 @@ func fetchCmd() *cobra.Command {
 	waitUntilFlag(cmd, &options.WaitUntil, pandaxng.DefaultFetchWaitUntil)
 	cmd.Flags().StringVar(&options.Language, "language", "en-US", "browser locale")
 	cmd.Flags().StringVar(&options.Binary, "lightpanda", "lightpanda", "Lightpanda executable")
+	cmd.Flags().BoolVar(&options.DisableAdblock, "disable-adblock", false, "disable EasyList and EasyPrivacy filtering")
 	return cmd
 }
 

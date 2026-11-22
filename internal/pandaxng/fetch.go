@@ -19,6 +19,8 @@ type FetchOptions struct {
 	WaitUntil            string
 	Format               string
 	BlockPrivateNetworks bool
+	DisableAdblock       bool
+	SharedAdblock        *SharedAdblockLists
 }
 
 const DefaultFetchFormat = "md"
@@ -52,6 +54,11 @@ func FetchContent(ctx context.Context, rawURL string, options FetchOptions) (str
 	if err != nil {
 		return "", fmt.Errorf("Lightpanda not found: %w", err)
 	}
+	adblockArgs, adblockFiles, cleanup, err := prepareAdblockLists(options.DisableAdblock, options.SharedAdblock)
+	if err != nil {
+		return "", err
+	}
+	defer cleanup()
 	ctx, cancel := context.WithTimeout(ctx, options.Timeout+3*time.Second)
 	defer cancel()
 	millis := strconv.FormatInt(options.Timeout.Milliseconds(), 10)
@@ -62,11 +69,13 @@ func FetchContent(ctx context.Context, rawURL string, options FetchOptions) (str
 		"--wait-until", waitUntil, "--wait-ms", millis, "--terminate-ms", millis,
 		"--http-max-response-size", "16777216", "--v8-max-heap-mb", "256",
 		"--fail-on-http-error"}
+	args = append(args, adblockArgs...)
 	if options.BlockPrivateNetworks {
 		args = append(args, "--block-private-networks")
 	}
 	args = append(args, u.String())
 	cmd := exec.CommandContext(ctx, binary, args...)
+	cmd.ExtraFiles = adblockFiles
 	cmd.Env = browserEnv()
 	cmd.WaitDelay = time.Second
 	var stdout, stderr bytes.Buffer

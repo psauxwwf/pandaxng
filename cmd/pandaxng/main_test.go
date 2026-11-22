@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -152,6 +153,71 @@ func TestFetchCommand(t *testing.T) {
 	}
 	if output.String() != "# Markdown\n" {
 		t.Fatalf("unexpected output: %q", output.String())
+	}
+}
+
+func TestDisableAdblockCLI(t *testing.T) {
+	binary := filepath.Join(t.TempDir(), "lightpanda")
+	script := `#!/bin/sh
+case " $* " in *' --adblock-lists '*) state=enabled ;; *) state=disabled ;; esac
+case "$1" in
+  run) printf '{"status":"ok","results":[{"url":"https://example.com/","title":"%s"}]}\n' "$state" ;;
+  fetch) printf '%s' "$state" ;;
+  *) exit 9 ;;
+esac
+`
+	if err := os.WriteFile(binary, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, command := range []string{"search", "fetch"} {
+		for _, disabled := range []bool{false, true} {
+			t.Run(command+"/"+strconv.FormatBool(disabled), func(t *testing.T) {
+				cmd := rootCmd()
+				var output bytes.Buffer
+				cmd.SetOut(&output)
+				target := "https://example.com"
+				if command == "search" {
+					target = "test"
+				}
+				args := []string{command, target, "--lightpanda", binary}
+				if command == "search" {
+					args = append(args, "--engines", "bing")
+				}
+				if disabled {
+					args = append(args, "--disable-adblock")
+				}
+				cmd.SetArgs(args)
+				if err := cmd.Execute(); err != nil {
+					t.Fatal(err)
+				}
+				want := "enabled"
+				if disabled {
+					want = "disabled"
+				}
+				if !strings.Contains(output.String(), want) {
+					t.Fatalf("expected %s, got %q", want, output.String())
+				}
+			})
+		}
+	}
+}
+
+func TestDisableAdblockFlagDefaults(t *testing.T) {
+	for _, cmd := range rootCmd().Commands() {
+		if cmd.Hidden {
+			continue
+		}
+		value, err := cmd.Flags().GetBool("disable-adblock")
+		if err != nil || value {
+			t.Fatalf("%s: default disable-adblock = %v, error %v", cmd.Name(), value, err)
+		}
+		if err := cmd.Flags().Set("disable-adblock", "true"); err != nil {
+			t.Fatal(err)
+		}
+		value, err = cmd.Flags().GetBool("disable-adblock")
+		if err != nil || !value {
+			t.Fatalf("%s: flag did not set disable-adblock: %v, error %v", cmd.Name(), value, err)
+		}
 	}
 }
 
