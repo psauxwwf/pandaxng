@@ -173,7 +173,12 @@ func limitCalls(searchTimeout, fetchTimeout time.Duration) server.ToolHandlerMid
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			ctx, cancel := context.WithTimeout(ctx, timeout+3*time.Second)
+			// Fetch may make a second attempt with domcontentloaded after failure.
+			deadline := timeout + 3*time.Second
+			if request.Params.Name == "fetch_content" {
+				deadline *= 2
+			}
+			ctx, cancel := context.WithTimeout(ctx, deadline)
 			defer cancel()
 			select {
 			case slots <- struct{}{}:

@@ -59,21 +59,28 @@ func FetchContent(ctx context.Context, rawURL string, options FetchOptions) (str
 		return "", err
 	}
 	defer cleanup()
+	millis := strconv.FormatInt(options.Timeout.Milliseconds(), 10)
+	content, err := fetchAttempt(ctx, binary, u.String(), dump, waitUntil, millis, options, adblockArgs, adblockFiles)
+	if err != nil && waitUntil != "domcontentloaded" && ctx.Err() == nil {
+		return fetchAttempt(ctx, binary, u.String(), dump, "domcontentloaded", millis, options, adblockArgs, adblockFiles)
+	}
+	return content, err
+}
+
+func fetchAttempt(ctx context.Context, binary, rawURL, dump, waitUntil, millis string, options FetchOptions, adblockArgs []string, adblockFiles []*os.File) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, options.Timeout+3*time.Second)
 	defer cancel()
-	millis := strconv.FormatInt(options.Timeout.Milliseconds(), 10)
 	args := []string{"fetch",
 		"--log-format", "pretty", "--log-level", "info", "--dump", dump,
 		"--user-agent", userAgent, "--insecure-disable-tls-host-verification",
 		"--locale", options.Language, "--http-timeout", millis, "--watchdog-ms", millis,
 		"--wait-until", waitUntil, "--wait-ms", millis, "--terminate-ms", millis,
-		"--http-max-response-size", "16777216", "--v8-max-heap-mb", "256",
-		"--fail-on-http-error"}
+		"--http-max-response-size", "16777216", "--v8-max-heap-mb", "256"}
 	args = append(args, adblockArgs...)
 	if options.BlockPrivateNetworks {
 		args = append(args, "--block-private-networks")
 	}
-	args = append(args, u.String())
+	args = append(args, rawURL)
 	cmd := exec.CommandContext(ctx, binary, args...)
 	cmd.ExtraFiles = adblockFiles
 	cmd.Env = browserEnv()

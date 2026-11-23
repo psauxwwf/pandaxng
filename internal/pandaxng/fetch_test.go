@@ -72,7 +72,7 @@ printf '# Заголовок\n\n[Ссылка](https://example.com/)\n'
 		"--locale", "ru-RU", "--http-timeout", "20000", "--watchdog-ms", "20000",
 		"--wait-until", "done", "--wait-ms", "20000", "--terminate-ms", "20000",
 		"--http-max-response-size", "16777216", "--v8-max-heap-mb", "256",
-		"--fail-on-http-error", "https://example.com/?q=a&b=2"}
+		"https://example.com/?q=a&b=2"}
 	if !reflect.DeepEqual(args, want) {
 		t.Fatalf("unexpected arguments: %q", args)
 	}
@@ -157,6 +157,107 @@ func TestFetchProcessError(t *testing.T) {
 	}
 }
 
+func TestFetchFallback(t *testing.T) {
+	for _, mode := range []string{"", "load", "networkalmostidle", "networkidle", "done", "domcontentloaded"} {
+		t.Run(fmt.Sprintf("mode=%s", mode), func(t *testing.T) {
+			attempts := filepath.Join(t.TempDir(), "attempts")
+			t.Setenv("PANDAXNG_ATTEMPTS", attempts)
+			binary := fakeFetchBinary(t, `mode=
+previous=
+case " $* " in *' --block-private-networks '*) ;; *) exit 9 ;; esac
+case " $* " in *' --dump html '*) ;; *) exit 10 ;; esac
+for arg in "$@"; do
+  if [ "$previous" = '--wait-until' ]; then mode="$arg"; fi
+  previous="$arg"
+done
+printf '%s\n' "$mode" >> "$PANDAXNG_ATTEMPTS"
+if [ "$mode" = domcontentloaded ]; then printf 'fallback page'; exit 0; fi
+printf 'first attempt failed' >&2
+exit 1
+`)
+			content, err := FetchContent(context.Background(), "https://example.com", FetchOptions{
+				Binary: binary, Timeout: time.Second, WaitUntil: mode, Format: "html", BlockPrivateNetworks: true,
+			})
+			if err != nil || content != "fallback page" {
+				t.Fatalf("content %q, error %v", content, err)
+			}
+			got, err := os.ReadFile(attempts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			first := mode
+			if first == "" {
+				first = DefaultFetchWaitUntil
+			}
+			want := first + "\n"
+			if first != "domcontentloaded" {
+				want += "domcontentloaded\n"
+			}
+			if string(got) != want {
+				t.Fatalf("attempts %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestFetchFallbackError(t *testing.T) {
+	attempts := filepath.Join(t.TempDir(), "attempts")
+	t.Setenv("PANDAXNG_ATTEMPTS", attempts)
+	binary := fakeFetchBinary(t, `mode=
+previous=
+for arg in "$@"; do
+  if [ "$previous" = '--wait-until' ]; then mode="$arg"; fi
+  previous="$arg"
+done
+printf '%s\n' "$mode" >> "$PANDAXNG_ATTEMPTS"
+printf '%s failed' "$mode" >&2
+exit 22
+`)
+	for _, mode := range []string{"done", "domcontentloaded"} {
+		t.Run(mode, func(t *testing.T) {
+			if err := os.WriteFile(attempts, nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			content, err := FetchContent(context.Background(), "https://example.com", FetchOptions{
+				Binary: binary, Timeout: time.Second, WaitUntil: mode,
+			})
+			if content != "" || err == nil || !strings.Contains(err.Error(), "domcontentloaded failed") {
+				t.Fatalf("content %q, error %v", content, err)
+			}
+			got, err := os.ReadFile(attempts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := "domcontentloaded\n"
+			if mode != "domcontentloaded" {
+				want = mode + "\n" + want
+			}
+			if string(got) != want {
+				t.Fatalf("attempts %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestFetchFallbackAfterAttemptDeadline(t *testing.T) {
+	binary := fakeFetchBinary(t, `previous=
+for arg in "$@"; do
+  if [ "$previous" = '--wait-until' ] && [ "$arg" = domcontentloaded ]; then
+    printf 'fallback page'
+    exit 0
+  fi
+  previous="$arg"
+done
+exec sleep 30
+`)
+	content, err := FetchContent(context.Background(), "https://example.com", FetchOptions{
+		Binary: binary, Timeout: time.Second, WaitUntil: "done",
+	})
+	if err != nil || content != "fallback page" {
+		t.Fatalf("content %q, error %v", content, err)
+	}
+}
+
 func TestFetchCancellation(t *testing.T) {
 	binary := fakeFetchBinary(t, "exec sleep 30\n")
 	for _, deadline := range []bool{false, true} {
@@ -189,10 +290,6 @@ func TestFetchLightpandaIntegration(t *testing.T) {
 		if r.URL.Path == "/dynamic" {
 			time.Sleep(750 * time.Millisecond)
 			fmt.Fprint(w, "JavaScript executed")
-			return
-		}
-		if r.URL.Path == "/missing" {
-			http.Error(w, "missing page", http.StatusNotFound)
 			return
 		}
 		if r.UserAgent() != userAgent {
@@ -236,8 +333,47 @@ func TestFetchLightpandaIntegration(t *testing.T) {
 			}
 		})
 	}
-	if content, err := FetchContent(ctx, server.URL+"/missing", options); err == nil || content != "" {
-		t.Fatalf("HTTP 404 should fail: content %q, error %v", content, err)
+}
+
+func TestFetchHTTPErrorPages(t *testing.T) {
+	binary, err := exec.LookPath("lightpanda")
+	if err != nil {
+		t.Skip("Lightpanda is not installed")
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/redirect" {
+			http.Redirect(w, r, "/404", http.StatusFound)
+			return
+		}
+		status := http.StatusNotFound
+		switch r.URL.Path {
+		case "/403":
+			status = http.StatusForbidden
+		case "/500":
+			status = http.StatusInternalServerError
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(status)
+		fmt.Fprintf(w, "<!doctype html><html><body><h1>Error page %d</h1></body></html>", status)
+	}))
+	defer server.Close()
+	for _, tc := range []struct {
+		path   string
+		status int
+	}{
+		{"/403", 403}, {"/404", 404}, {"/500", 500}, {"/redirect", 404},
+	} {
+		for _, format := range FetchFormats() {
+			t.Run(fmt.Sprintf("%s/%s", tc.path, format), func(t *testing.T) {
+				content, err := FetchContent(context.Background(), server.URL+tc.path, FetchOptions{
+					Binary: binary, Timeout: 3 * time.Second, WaitUntil: "domcontentloaded",
+					Language: "en-US", Format: format,
+				})
+				if err != nil || !strings.Contains(content, fmt.Sprintf("Error page %d", tc.status)) {
+					t.Fatalf("HTTP %d: content %q, error %v", tc.status, content, err)
+				}
+			})
+		}
 	}
 }
 

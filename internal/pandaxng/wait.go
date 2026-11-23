@@ -11,7 +11,7 @@ const (
 	DefaultSearchWaitUntil = "domcontentloaded"
 	DefaultFetchWaitUntil  = "done"
 	DefaultSearchTimeout   = 20 * time.Second
-	DefaultFetchTimeout    = 40 * time.Second
+	DefaultFetchTimeout    = 30 * time.Second
 )
 
 func WaitUntilModes() []string {

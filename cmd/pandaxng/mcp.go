@@ -23,7 +23,7 @@ func mcpCmd() *cobra.Command {
 	cmd.Flags().StringVar(&config.Transport, "transport", "stdio", "MCP transport: stdio or http")
 	cmd.Flags().StringVar(&config.Listen, "listen", "127.0.0.1:8080", "HTTP listen address (/mcp endpoint)")
 	cmd.Flags().StringVar(&config.Binary, "lightpanda", "lightpanda", "Lightpanda executable")
-	cmd.Flags().DurationVar(&config.Timeout, "timeout", 0, "override both tool timeouts (1s–2m; defaults: search 20s, fetch 40s)")
+	cmd.Flags().DurationVar(&config.Timeout, "timeout", 0, "override both tool timeouts (1s–2m; defaults: search 20s, fetch 30s)")
 	waitUntilFlag(cmd, &config.WaitUntil, "")
 	cmd.Flags().Lookup("wait-until").Usage += "; defaults: search domcontentloaded, fetch done"
 	cmd.Flags().StringVar(&config.Language, "language", "en-US", "default browser locale")

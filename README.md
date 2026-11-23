@@ -21,10 +21,10 @@ Requirements:
 Build: `task build` → `bin/pandaxng` (Linux amd64,
 `CGO_ENABLED=0`, static build). Requires Task and binutils (`strip`, `objcopy`).
 
-Release: `task release` rebuilds the binary, packages it as
-`bin/pandaxng_linux_amd64.tar.gz`, and publishes a GitHub Release tagged
-`vMM.DD.HH` (for example, `v10.19.16`). Requires `tar` and an authenticated GitHub CLI
-(`gh auth login`). Publishing again with the same tag fails.
+Release: `task release VERSION=v1.2.3` rebuilds the binary, packages it as
+`bin/pandaxng_linux_amd64.tar.gz`, and publishes a GitHub Release for the current
+commit with automatically generated notes. Requires `tar` and an authenticated
+GitHub CLI (`gh auth login`). Publishing again with the same tag fails.
 
 Alternatively, build directly with Go:
 
@@ -44,7 +44,7 @@ are the same for the CLI and MCP tools:
 | Operation                 | Wait mode          | Timeout               |
 | ------------------------- | ------------------ | --------------------- |
 | `search`                  | `domcontentloaded` | 20 seconds per engine |
-| `fetch` / `fetch_content` | `done`             | 40 seconds            |
+| `fetch` / `fetch_content` | `done`             | 30 seconds            |
 
 | Mode                | When to read the page                                      |
 | ------------------- | ---------------------------------------------------------- |
@@ -54,7 +54,7 @@ are the same for the CLI and MCP tools:
 | `networkidle`       | When network activity has subsided                         |
 | `done`              | After all pending scripts and network requests have finished |
 
-Waiting is bounded by `--timeout`. Continuous background
+Waiting on each attempt is bounded by `--timeout`. Continuous background
 activity can cause `done` to time out even when results are already available.
 For example, you can use `--wait-until networkalmostidle` for Yahoo.
 Earlier wait modes may return a page before JavaScript has populated it;
@@ -159,14 +159,20 @@ link URLs and preserve code formatting less accurately. For reading pages,
 Runs `lightpanda fetch --dump <format> --log-format pretty --log-level info`
 (`md` is converted to `markdown`)
 with the same User-Agent and TLS flag as search. The default wait mode is `done`,
-with a 40-second timeout. The page is loaded with JavaScript
+with a 30-second timeout. The page is loaded with JavaScript
 execution, and its full content is printed in the selected format (without a JSON wrapper).
 Lightpanda logs are kept separate
 from the content; on failure, diagnostics go to stderr and the exit code is `1`.
-HTTP 4xx/5xx responses are treated as errors. Supports `--format`, `--timeout`, `--wait-until`, `--language`, `--disable-adblock`,
+HTTP 4xx/5xx pages are returned as content, rather than treated as fetch errors.
+Supports `--format`, `--timeout`, `--wait-until`, `--language`, `--disable-adblock`,
 and `--lightpanda`; `Ctrl+C` stops the process.
 
 The CLI `fetch` command and the MCP `fetch_content` tool share the same implementation.
+If a fetch using any wait mode other than `domcontentloaded` fails, it is retried
+once using `domcontentloaded`, and the retry's result or error is returned.
+Each attempt has its own timeout, so a retry may take up to roughly twice the
+configured timeout. Cancellation prevents a retry. An HTTP error status alone
+does not trigger a retry.
 Caching and pagination are not yet supported.
 Only HTTP(S) URLs without credentials are allowed, but private network access
 is not blocked in the local CLI command: only pass trusted URLs.
@@ -199,7 +205,7 @@ Both transports expose the same tools:
 
 The server flags `--lightpanda`, `--timeout`, `--language`, and `--wait-until` set
 shared options. Without these flags, the tools use different defaults:
-`search` uses `domcontentloaded` / 20 seconds; `fetch_content` uses `done` / 40 seconds.
+`search` uses `domcontentloaded` / 20 seconds; `fetch_content` uses `done` / 30 seconds.
 Explicit `mcp --timeout` and `mcp --wait-until` flags override the corresponding setting
 for both tools. The `wait_until` and `timeout` arguments are **optional**:
 omit them to use the server settings.

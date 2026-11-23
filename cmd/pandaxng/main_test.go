@@ -232,7 +232,7 @@ func TestWaitUntilFlags(t *testing.T) {
 		case "search":
 			wantMode, wantTimeout = "domcontentloaded", 20*time.Second
 		case "fetch":
-			wantMode, wantTimeout = "done", 40*time.Second
+			wantMode, wantTimeout = "done", 30*time.Second
 		}
 		if err != nil || mode != wantMode {
 			t.Fatalf("%s: default wait-until %q, error %v", cmd.Name(), mode, err)

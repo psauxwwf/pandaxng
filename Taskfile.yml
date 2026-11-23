@@ -55,9 +55,9 @@ tasks:
   release:
     desc: Build and publish a GitHub release
     dir: "{{.ROOT_DIR}}"
+    requires:
+      vars: [VERSION]
     deps: [build]
     cmds:
       - tar -czf "{{.RELEASE_LINUX_ARCHIVE}}" -C "{{.BIN}}" "{{.APP}}"
-      - |
-        TAG=$(date +v%m.%d.%H)
-        gh release create "$TAG" "{{.RELEASE_LINUX_ARCHIVE}}"
+      - gh release create "{{.VERSION}}" "{{.RELEASE_LINUX_ARCHIVE}}" --target "$(git rev-parse HEAD)" --generate-notes

@@ -608,7 +608,7 @@ esac
 						want := "--wait-until\n" + mode + "\n"
 						wantTimeout := timeout
 						if wantTimeout == 0 {
-							wantTimeout = 40 * time.Second
+							wantTimeout = 30 * time.Second
 							if name == "search" {
 								wantTimeout = 20 * time.Second
 							}
@@ -654,10 +654,13 @@ func TestToolDeadlines(t *testing.T) {
 		deadline, ok := ctx.Deadline()
 		want := 23 * time.Second
 		if request.Params.Name == "fetch_content" {
-			want = 43 * time.Second
+			want = 86 * time.Second
 		}
 		if args := request.GetArguments(); args["timeout"] != nil {
 			want = time.Duration(args["timeout"].(int)+3) * time.Second
+			if request.Params.Name == "fetch_content" {
+				want *= 2
+			}
 		}
 		if remaining := time.Until(deadline); !ok || remaining > want || remaining < want-time.Second {
 			t.Fatalf("%s: incorrect tool deadline: %v", request.Params.Name, remaining)
